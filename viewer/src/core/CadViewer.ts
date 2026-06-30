@@ -6,6 +6,9 @@ import { CameraRig } from "./CameraRig";
 import { Controls } from "./Controls";
 import { deepDispose } from "./dispose";
 import { TECHNICAL } from "../materials/materials";
+import { LightRig } from "../materials/lighting";
+import { ShadowStage } from "../materials/shadows";
+import { Post } from "../materials/postprocessing";
 import { InteractionController, type SelectTopo } from "../interaction/InteractionController";
 
 const DPR_CAP = 2;
@@ -26,8 +29,9 @@ export class CadViewer {
   private preset: RenderPreset = TECHNICAL;
   private resolution = new THREE.Vector2(1, 1);
 
-  private ambient: THREE.AmbientLight;
-  private key: THREE.DirectionalLight;
+  private lights: LightRig;
+  private shadow: ShadowStage;
+  private post: Post;
 
   private framedOnce = false;
   private rafId: number | null = null;
@@ -59,9 +63,9 @@ export class CadViewer {
       this.requestRender();
     });
 
-    this.ambient = new THREE.AmbientLight(0xffffff, this.preset.ambientIntensity);
-    this.key = new THREE.DirectionalLight(0xffffff, this.preset.directIntensity);
-    this.scene.add(this.ambient, this.key);
+    this.lights = new LightRig(this.scene, this.renderer);
+    this.lights.applyPreset(this.preset);
+    this.shadow = new ShadowStage(this.scene);
 
     this.controller = new InteractionController(
       this.renderer.domElement,
@@ -70,7 +74,10 @@ export class CadViewer {
     );
 
     const r = container.getBoundingClientRect();
-    this.resize(Math.max(r.width, 1), Math.max(r.height, 1));
+    const w = Math.max(Math.floor(r.width), 1);
+    const h = Math.max(Math.floor(r.height), 1);
+    this.post = new Post(this.renderer, this.scene, this.rig.camera, w, h);
+    this.resize(w, h);
   }
 
   // --- rendering -------------------------------------------------------------
@@ -83,7 +90,7 @@ export class CadViewer {
     const sg = buildSceneGraph(shapes, this.preset, this.resolution);
     this.sceneGraph = sg;
     this.scene.add(sg.root);
-    this.applyLights();
+    this.applyPreset(sg.bbox);
     this.controller.setTargets(sg.leaves);
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
@@ -113,9 +120,15 @@ export class CadViewer {
     this.sceneGraph = null;
   }
 
-  private applyLights(): void {
-    this.ambient.intensity = this.preset.ambientIntensity;
-    this.key.intensity = this.preset.directIntensity;
+  // Apply the active preset to lights, shadow, AO and tone mapping (no rebuild).
+  private applyPreset(bbox: THREE.Box3): void {
+    this.lights.applyPreset(this.preset);
+    this.lights.positionTo(bbox);
+    this.shadow.setEnabled(!!this.preset.shadowEnabled);
+    this.shadow.fitTo(bbox);
+    this.post.configure(this.preset, bbox);
+    this.renderer.toneMapping = this.preset.toneMapping ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    this.renderer.toneMappingExposure = 1;
   }
 
   private requestRender(): void {
@@ -128,9 +141,11 @@ export class CadViewer {
 
   private draw(): void {
     if (this.disposed) return;
-    // Headlight: light from the eye so reads are clean (B3 replaces with a rig).
-    this.key.position.copy(this.rig.camera.position);
-    this.renderer.render(this.scene, this.rig.camera);
+    this.lights.updateHeadlight(this.rig.camera);
+    // Presentation goes through the AO/AA composer; technical renders straight
+    // (crisp, literal colors). Diagnostic modes keep AO off via their presets.
+    if (this.preset.aoEnabled) this.post.render();
+    else this.renderer.render(this.scene, this.rig.camera);
   }
 
   // --- camera ---------------------------------------------------------------
@@ -148,6 +163,8 @@ export class CadViewer {
     if (this.rig.isOrtho === ortho) return;
     this.rig.isOrtho = ortho;
     this.controls.setCamera(this.rig.camera, this.renderer.domElement);
+    this.post.renderPass.camera = this.rig.camera;
+    this.post.gtao.camera = this.rig.camera;
     this.requestRender();
   }
 
@@ -183,6 +200,7 @@ export class CadViewer {
     this.renderer.setSize(width, height, false);
     this.rig.setAspect(width, height);
     this.resolution.set(width * dpr, height * dpr);
+    this.post?.setSize(width, height);
     if (this.sceneGraph) {
       for (const mat of this.sceneGraph.lineMaterials) (mat as LineMaterial).resolution.copy(this.resolution);
     }
@@ -204,9 +222,9 @@ export class CadViewer {
     this.controller.dispose();
     this.controls.dispose();
     this.clearGraph();
-    this.scene.remove(this.ambient, this.key);
-    this.ambient.dispose();
-    this.key.dispose();
+    this.lights.dispose();
+    this.shadow.dispose();
+    this.post.dispose();
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
