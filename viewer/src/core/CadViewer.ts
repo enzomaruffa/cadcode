@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import type { NotifyCallback, NotifyChange, RenderPreset, TessShapes, ViewerOptions } from "./types";
+import type { NotifyCallback, NotifyChange, PickEvent, RenderPreset, TessShapes, ViewerOptions } from "./types";
 import { buildSceneGraph, type SceneGraph } from "./SceneGraph";
 import { CameraRig } from "./CameraRig";
 import { Controls } from "./Controls";
@@ -11,6 +11,7 @@ import { ShadowStage } from "../materials/shadows";
 import { Post } from "../materials/postprocessing";
 import { applyHighlight } from "../materials/colorApi";
 import { InteractionController, type SelectTopo } from "../interaction/InteractionController";
+import { SelectionHighlight } from "../interaction/SelectionHighlight";
 
 const DPR_CAP = 2;
 
@@ -33,6 +34,7 @@ export class CadViewer {
   private lights: LightRig;
   private shadow: ShadowStage;
   private post: Post;
+  private selection: SelectionHighlight;
 
   private framedOnce = false;
   private rafId: number | null = null;
@@ -67,11 +69,12 @@ export class CadViewer {
     this.lights = new LightRig(this.scene, this.renderer);
     this.lights.applyPreset(this.preset);
     this.shadow = new ShadowStage(this.scene);
+    this.selection = new SelectionHighlight(this.scene, this.resolution);
 
     this.controller = new InteractionController(
       this.renderer.domElement,
       () => this.rig.camera,
-      (p) => this.notify?.({ pick: { new: p } }),
+      (p) => this.onPick(p),
     );
 
     const r = container.getBoundingClientRect();
@@ -116,9 +119,22 @@ export class CadViewer {
 
   private clearGraph(): void {
     if (!this.sceneGraph) return;
+    // Clear the selection overlay BEFORE disposing the geometry it references.
+    this.selection.clear();
     this.scene.remove(this.sceneGraph.root);
     deepDispose(this.sceneGraph.root);
     this.sceneGraph = null;
+  }
+
+  // A pick both highlights locally (instant feedback) and notifies the host.
+  private onPick(p: PickEvent): void {
+    const leaf = this.sceneGraph?.leafById.get(p.shapeId);
+    if (leaf) {
+      if (p.kind === "edge") this.selection.showEdge(leaf, p.index);
+      else if (p.kind === "face") this.selection.showFace(leaf, p.index);
+    }
+    this.requestRender();
+    this.notify?.({ pick: { new: p } });
   }
 
   // Apply the active preset to lights, shadow, AO and tone mapping (no rebuild).
@@ -233,6 +249,7 @@ export class CadViewer {
     this.clearGraph();
     this.lights.dispose();
     this.shadow.dispose();
+    this.selection.dispose();
     this.post.dispose();
     this.renderer.renderLists.dispose();
     this.renderer.dispose();

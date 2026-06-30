@@ -26,7 +26,8 @@ const pathName = (id: string) => id.replaceAll("/", "|");
 function buildEdges(edges: unknown, color: THREE.ColorRepresentation, resolution: THREE.Vector2): LineSegments2 {
   const geom = new LineSegmentsGeometry();
   // `edges` is a list of segments [[x,y,z],[x,y,z]] — flatten to [x,y,z,x,y,z,...].
-  geom.setPositions(new Float32Array(flattenNumbers(edges)));
+  const flat = flattenNumbers(edges);
+  geom.setPositions(new Float32Array(flat));
   const mat = new LineMaterial({
     color: new THREE.Color(color).getHex(),
     linewidth: 1.4, // screen pixels
@@ -40,6 +41,8 @@ function buildEdges(edges: unknown, color: THREE.ColorRepresentation, resolution
   // Edges are part of the model; skip frustum culling so a stray NaN bounding
   // sphere can never hide them (computeLineDistances is for dashed lines only).
   seg.frustumCulled = false;
+  // Keep the flat segment stream for per-edge selection highlighting.
+  seg.userData.edgeFlat = flat;
   return seg;
 }
 

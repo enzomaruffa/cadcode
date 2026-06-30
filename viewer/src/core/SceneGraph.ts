@@ -7,6 +7,7 @@ export interface SceneGraph {
   root: THREE.Group;
   groups: Map<string, THREE.Object3D>;
   leaves: LeafObject[];
+  leafById: Map<string, LeafObject>;
   bbox: THREE.Box3;
   lineMaterials: LineMaterial[];
 }
@@ -27,6 +28,7 @@ interface Ctx {
   resolution: THREE.Vector2;
   groups: Map<string, THREE.Object3D>;
   leaves: LeafObject[];
+  leafById: Map<string, LeafObject>;
   lineMaterials: LineMaterial[];
   faceOrdinal: { n: number };
 }
@@ -52,6 +54,7 @@ function buildNode(node: TessShapes | TessPart, ctx: Ctx): THREE.Group {
   applyLoc(leaf.group, asPart.loc);
   ctx.groups.set(asPart.id, leaf.group);
   ctx.leaves.push(leaf);
+  ctx.leafById.set(asPart.id, leaf);
   if (leaf.edges) ctx.lineMaterials.push(leaf.edges.material as LineMaterial);
   return leaf.group;
 }
@@ -65,6 +68,7 @@ export function buildSceneGraph(shapes: TessShapes, preset: RenderPreset, resolu
     resolution,
     groups: new Map(),
     leaves: [],
+    leafById: new Map(),
     lineMaterials: [],
     faceOrdinal: { n: 0 },
   };
@@ -83,5 +87,12 @@ export function buildSceneGraph(shapes: TessShapes, preset: RenderPreset, resolu
     bbox = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
   }
 
-  return { root, groups: ctx.groups, leaves: ctx.leaves, bbox, lineMaterials: ctx.lineMaterials };
+  return {
+    root,
+    groups: ctx.groups,
+    leaves: ctx.leaves,
+    leafById: ctx.leafById,
+    bbox,
+    lineMaterials: ctx.lineMaterials,
+  };
 }
