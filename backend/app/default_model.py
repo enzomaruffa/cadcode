@@ -6,13 +6,15 @@ working the moment the app loads.
 """
 
 DEFAULT_SOURCE = '''\
+from typing import Annotated
 from build123d import BuildPart, Box, Hole, Locations, fillet, Axis
 from lib.design import FILLET, M3_CLEARANCE_D  # shared design tokens (plan §5)
+from lib.params import Range  # typed slider ranges (plan §6)
 
-# Part-specific parameters — the `# [min, max]` annotation drives each slider.
-WIDTH = 80   # [20, 160]
-DEPTH = 50   # [20, 120]
-HEIGHT = 12  # [4, 40]
+# Part-specific parameters — the typed Range(...) annotation drives each slider.
+WIDTH: Annotated[float, Range(20, 160)] = 80
+DEPTH: Annotated[float, Range(20, 120)] = 50
+HEIGHT: Annotated[float, Range(4, 40)] = 12
 
 with BuildPart() as plate:
     Box(WIDTH, DEPTH, HEIGHT)

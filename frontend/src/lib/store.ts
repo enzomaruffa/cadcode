@@ -44,6 +44,24 @@ export interface ChatMessage {
   error?: boolean;
 }
 
+export interface TabDoc {
+  id: string;
+  name: string;
+  source: string;
+}
+
+const NEW_PART_SKELETON = `from typing import Annotated
+from build123d import BuildPart, Box
+from lib.params import Range
+
+SIZE: Annotated[float, Range(5, 80)] = 20
+
+with BuildPart() as part:
+    Box(SIZE, SIZE, SIZE)
+
+show(part.part, name="part", color="#9aa7ff")
+`;
+
 type Conn = "connecting" | "open" | "closed";
 type RunState = "idle" | "running" | "ok" | "error";
 
@@ -56,6 +74,8 @@ interface ErrorInfo {
 interface StoreState {
   conn: Conn;
   source: string;
+  docs: TabDoc[];
+  activeDocId: string;
   // monotonically bumped whenever new geometry arrives, so the viewport re-renders
   shapes: TessShapes | null;
   geometryRev: number;
@@ -84,6 +104,10 @@ interface StoreState {
 
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
+  newDoc: () => void;
+  switchDoc: (id: string) => void;
+  closeDoc: (id: string) => void;
+  renameDoc: (id: string, name: string) => void;
   runNow: () => void;
   sendSelect: (kind: SelectKind, shapeId: string, index: number) => void;
   clearSelection: () => void;
@@ -116,6 +140,8 @@ function send(type: string, payload: Record<string, unknown>) {
 export const useStore = create<StoreState>((set, get) => ({
   conn: "connecting",
   source: "",
+  docs: [],
+  activeDocId: "",
   shapes: null,
   geometryRev: 0,
   stale: false,
@@ -148,7 +174,10 @@ export const useStore = create<StoreState>((set, get) => ({
     fetch(`${HTTP_URL}/default-source`)
       .then((r) => r.json())
       .then((d: { source: string }) => {
-        if (!get().source) set({ source: d.source });
+        if (get().docs.length === 0) {
+          const id = makeId();
+          set({ docs: [{ id, name: "part 1", source: d.source }], activeDocId: id, source: d.source });
+        }
       })
       .catch(() => void 0);
 
@@ -230,7 +259,8 @@ export const useStore = create<StoreState>((set, get) => ({
         }
         case SOURCE: {
           // Authoritative buffer push from the backend (rollback/undo/redo).
-          set({ source: (env.payload as { source: string }).source });
+          const src = (env.payload as { source: string }).source;
+          set((s) => ({ source: src, docs: s.docs.map((d) => (d.id === s.activeDocId ? { ...d, source: src } : d)) }));
           break;
         }
         default:
@@ -240,12 +270,41 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   setSource: (source, opts) => {
-    set({ source });
+    // keep the active tab's buffer in sync
+    set((s) => ({
+      source,
+      docs: s.docs.map((d) => (d.id === s.activeDocId ? { ...d, source } : d)),
+    }));
     if (debounceTimer) clearTimeout(debounceTimer);
     const fire = () => send(EDIT, { source, debounced: true });
     if (opts?.immediate) fire();
     else debounceTimer = setTimeout(fire, EDIT_DEBOUNCE_MS);
   },
+
+  newDoc: () => {
+    const id = makeId();
+    set((s) => ({ docs: [...s.docs, { id, name: `part ${s.docs.length + 1}`, source: NEW_PART_SKELETON }] }));
+    get().switchDoc(id);
+  },
+
+  switchDoc: (id) => {
+    const doc = get().docs.find((d) => d.id === id);
+    if (!doc) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    set({ activeDocId: id, source: doc.source, selection: null, error: null });
+    send(EDIT, { source: doc.source }); // run the part for this tab
+  },
+
+  closeDoc: (id) => {
+    const { docs, activeDocId } = get();
+    if (docs.length <= 1) return; // keep at least one tab
+    const remaining = docs.filter((d) => d.id !== id);
+    set({ docs: remaining });
+    if (id === activeDocId) get().switchDoc(remaining[0].id);
+  },
+
+  renameDoc: (id, name) =>
+    set((s) => ({ docs: s.docs.map((d) => (d.id === id ? { ...d, name: name || d.name } : d)) })),
 
   runNow: () => {
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -302,6 +361,7 @@ export const useStore = create<StoreState>((set, get) => ({
     // Update the editor to the agent's source (the backend applies + re-runs).
     set((s) => ({
       source: patch.new_source,
+      docs: s.docs.map((d) => (d.id === s.activeDocId ? { ...d, source: patch.new_source } : d)),
       pendingPatch: null,
       diffStats: null,
       chat: [...s.chat, { role: "assistant", text: "✓ patch accepted" }],

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorPane } from "./components/EditorPane";
+import { TabBar } from "./components/TabBar";
 import { Viewport } from "./components/Viewport";
 import { StatusBar } from "./components/StatusBar";
 import { SelectionPanel } from "./components/SelectionPanel";
@@ -108,6 +109,7 @@ export default function App() {
         ) : (
           <section className="pane pane-editor" style={{ flex: `0 0 ${codeW}px` }}>
             <PaneTitle pane="code" label="code" />
+            <TabBar />
             <EditorPane />
             <ParamsPanel />
           </section>

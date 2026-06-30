@@ -41,11 +41,11 @@ function parsePick(name: string): { shapeId: string; kind: SelectKind; index: nu
 // Two render modes off the same data (plan §6): technical (flat, edges
 // emphasized, for modeling) and presentation (PBR-ish, softer edges).
 const TECHNICAL_RENDER = {
-  ambientIntensity: 1.0,
-  directIntensity: 1.1,
-  metalness: 0.3,
-  roughness: 0.65,
-  edgeColor: 0x707070,
+  ambientIntensity: 0.9,
+  directIntensity: 1.45,
+  metalness: 0.42,
+  roughness: 0.5,
+  edgeColor: 0x3a4250,
   defaultOpacity: 0.5,
   normalLen: 0,
 };

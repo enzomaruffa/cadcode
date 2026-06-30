@@ -63,6 +63,28 @@ async def default_source() -> dict[str, str]:
     return {"source": DEFAULT_SOURCE}
 
 
+@app.get("/library/{name}/geometry")
+async def library_geometry(name: str) -> dict:
+    """Tessellated geometry for one catalog part — drives the rotatable preview
+    in the library modal."""
+    import asyncio
+
+    def _go() -> dict:
+        from app.tessellate import tessellate
+        from lib import parts as _parts
+
+        fn = getattr(_parts, name, None)
+        if not callable(fn) or name not in getattr(_parts, "__all__", []):
+            return {"error": f"unknown part {name!r}"}
+        try:
+            shapes, states, bbox = tessellate([fn()], names=[name], colors=["#9aa7ff"])
+            return {"shapes": shapes, "states": states, "bbox": bbox}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    return await asyncio.to_thread(_go)
+
+
 @app.get("/library")
 async def library() -> dict[str, list]:
     """The parts catalog for the palette: signatures, docs, params + an

@@ -32,6 +32,31 @@ def _annotation(line: str) -> dict[str, float | int] | None:
     return out
 
 
+def _range_from_annotation(annotation: ast.expr | None) -> dict[str, float | int] | None:
+    """Parse `Annotated[<type>, Range(min, max[, step=...])]` -> {min,max[,step]}."""
+    if not isinstance(annotation, ast.Subscript):
+        return None
+    base = annotation.value
+    if not (isinstance(base, ast.Name) and base.id == "Annotated"):
+        return None
+    sl = annotation.slice
+    elts = sl.elts if isinstance(sl, ast.Tuple) else [sl]
+    for el in elts:
+        if isinstance(el, ast.Call) and isinstance(el.func, ast.Name) and el.func.id == "Range":
+            nums = [_number(a) for a in el.args]
+            kw = {k.arg: _number(k.value) for k in el.keywords if k.arg}
+            out: dict[str, float | int] = {}
+            if len(nums) >= 1 and nums[0] is not None:
+                out["min"] = nums[0]
+            if len(nums) >= 2 and nums[1] is not None:
+                out["max"] = nums[1]
+            step = (nums[2] if len(nums) >= 3 else None) or kw.get("step")
+            if step is not None:
+                out["step"] = step
+            return out if "min" in out and "max" in out else None
+    return None
+
+
 def _number(node: ast.expr) -> float | int | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
         return node.value
@@ -52,12 +77,15 @@ def extract_params(source: str) -> list[dict[str, Any]]:
     params: list[dict[str, Any]] = []
     seen: set[str] = set()
     for node in tree.body:  # top-level only
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        # Plain `NAME = 80` or typed `NAME: Annotated[float, Range(...)] = 80`.
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target, ann_node, value_node = node.targets[0], None, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            target, ann_node, value_node = node.target, node.annotation, node.value
+        else:
             continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        value = _number(node.value)
+
+        value = _number(value_node)
         if value is None or target.id in seen:
             continue
         seen.add(target.id)
@@ -67,9 +95,12 @@ def extract_params(source: str) -> list[dict[str, Any]]:
             "line": node.lineno,
             "is_int": isinstance(value, int),
         }
-        line_text = lines[node.lineno - 1] if 0 <= node.lineno - 1 < len(lines) else ""
-        ann = _annotation(line_text)
-        if ann:
-            entry.update(ann)
+        # Range from a typed annotation takes precedence over a `# [..]` comment.
+        rng = _range_from_annotation(ann_node)
+        if rng is None:
+            line_text = lines[node.lineno - 1] if 0 <= node.lineno - 1 < len(lines) else ""
+            rng = _annotation(line_text)
+        if rng:
+            entry.update(rng)
         params.append(entry)
     return params
