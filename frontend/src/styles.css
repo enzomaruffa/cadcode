@@ -1336,37 +1336,11 @@ textarea {
   background: var(--accent-bright);
 }
 
-/* ===== three-cad-viewer chrome: warm + standard fonts, declutter
-   (removed in Track B when the custom renderer lands) ===== */
-.tcv_cad_view,
-.tcv_cad_view * {
-  font-family: var(--font-ui) !important;
-}
-/* Force a dark scene regardless of whether [data-theme=dark] applied, and let
-   the transparent canvas show the container's studio gradient. */
+/* The studio backdrop for the renderer: a warm radial gradient behind the
+   transparent WebGL canvas. */
 .viewport-wrap,
 .part-preview {
-  --tcv-bg-color: #0c0b0a;
-  --tcv-bg-overlay-color: rgba(12, 11, 10, 0.86);
-  --tcv-font-color: #ece7df;
-  background: radial-gradient(125% 125% at 50% 16%, #17150f 0%, #0c0b0a 58%, #050403 100%) !important;
-}
-.tcv_cad_view,
-.tcv_cad_body,
-.tcv_cad_inset {
-  background: transparent !important;
-}
-/* The "Ready / Version / Control / Axes" info box is pure clutter — hide it. */
-.tcv_cad_info_wrapper,
-.tcv_cad_info,
-.tcv_cad_info_glass {
-  display: none !important;
-}
-/* The tree/clip/material overlay is the cluttered "white block" — hide it.
-   We keep the useful view toolbar (.tcv_cad_toolbar) and our own panels. */
-.tcv_cad_tree,
-.tcv_cad_tree_glass {
-  display: none !important;
+  background: radial-gradient(125% 125% at 50% 16%, #17150f 0%, #0c0b0a 58%, #050403 100%);
 }
 
 /* library: search + clickable cards + rotatable detail preview */
