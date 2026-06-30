@@ -15,6 +15,7 @@ export function ParamsPanel() {
   const setParam = useStore((s) => s.setParam);
 
   const [vals, setVals] = useState<Record<string, number>>({});
+  const [open, setOpen] = useState(true);
   const editedAt = useRef(0);
 
   // Sync slider values from source-derived params, but not right after a drag
@@ -31,7 +32,10 @@ export function ParamsPanel() {
 
   return (
     <div className="params">
-      <div className="params-title">parameters</div>
+      <button className="params-title" onClick={() => setOpen((o) => !o)}>
+        <span className={`palette-caret ${open ? "open" : ""}`}>▸</span> parameters ({params.length})
+      </button>
+      {open && (
       <div className="params-grid">
         {params.map((p) => {
           const v = vals[p.name] ?? p.value;
@@ -58,6 +62,7 @@ export function ParamsPanel() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }

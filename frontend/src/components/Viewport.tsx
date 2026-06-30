@@ -90,12 +90,14 @@ export function Viewport() {
     const { width, height } = sizeOf(container);
 
     const display = new Display(container, {
-      cadWidth: Math.max(width - TREE_W, 360),
+      // Glass mode floats the tree/tools as a collapsible overlay instead of a
+      // fixed side block — declutters the viewport so geometry is the focus.
+      cadWidth: width,
       height,
       treeWidth: TREE_W,
       theme: "dark",
       pinning: false,
-      glass: false,
+      glass: true,
     });
 
     // Track the live camera so re-renders on every edit don't reset the view.
@@ -133,18 +135,22 @@ export function Viewport() {
     viewerRef.current = viewer;
     (window as unknown as { __viewer: Viewer }).__viewer = viewer; // debug/E2E handle
 
+    let roTimer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
-      const s = sizeOf(container);
-      try {
-        (viewer as unknown as { resizeCadView?: (a: number, b: number, c: number, d: boolean) => void }).resizeCadView?.(
-          Math.max(s.width - TREE_W, 360),
-          TREE_W,
-          s.height,
-          false,
-        );
-      } catch {
-        /* ignore resize failures */
-      }
+      if (roTimer) clearTimeout(roTimer);
+      roTimer = setTimeout(() => {
+        const s = sizeOf(container);
+        try {
+          (viewer as unknown as { resizeCadView?: (a: number, b: number, c: number, d: boolean) => void }).resizeCadView?.(
+            s.width,
+            TREE_W,
+            s.height,
+            true, // glass
+          );
+        } catch {
+          /* ignore resize failures */
+        }
+      }, 80);
     });
     ro.observe(container);
 

@@ -114,7 +114,7 @@ export function EditorPane() {
         onMount={onMount}
         options={{
           fontSize: 13,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontFamily: '"SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace',
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
           automaticLayout: true,
