@@ -119,26 +119,44 @@ class Session:
 
     async def _on_set_mode(self, env: P.Envelope) -> None:
         mode = env.payload.get("mode", "technical")
-        if mode != "printability":
-            await self.run_current(env.id)  # back to the normal render
+        if mode == "printability":
+            result = await self.kernel.printability(env.payload.get("build_axis", "Z"))
+            if "error" in result:
+                await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+                return
+            await self.send(
+                P.GEOMETRY,
+                P.GeometryPayload(
+                    shapes=result.get("shapes") or {},
+                    states=result.get("states") or {},
+                    bbox=result.get("bbox"),
+                    mode="printability",
+                    print_stats=result.get("stats"),
+                ).model_dump(),
+                env.id,
+            )
+            await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
             return
-        build_axis = env.payload.get("build_axis", "Z")
-        result = await self.kernel.printability(build_axis)
-        if "error" in result:
-            await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+
+        if mode == "highlight":
+            result = await self.kernel.provenance(self.doc.source)
+            if "error" in result:
+                await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+                return
+            await self.send(
+                P.GEOMETRY,
+                P.GeometryPayload(
+                    shapes=result.get("shapes") or {},
+                    states=result.get("states") or {},
+                    bbox=result.get("bbox"),
+                    mode="highlight",
+                ).model_dump(),
+                env.id,
+            )
+            await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
             return
-        await self.send(
-            P.GEOMETRY,
-            P.GeometryPayload(
-                shapes=result.get("shapes") or {},
-                states=result.get("states") or {},
-                bbox=result.get("bbox"),
-                mode="printability",
-                print_stats=result.get("stats"),
-            ).model_dump(),
-            env.id,
-        )
-        await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+
+        await self.run_current(env.id)  # back to the normal render
 
     async def _on_select(self, env: P.Envelope) -> None:
         sel = P.SelectPayload(**env.payload)

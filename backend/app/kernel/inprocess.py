@@ -19,6 +19,7 @@ class Kernel(Protocol):
     async def run(self, source: str) -> RunResult: ...
     async def measure_selection(self, kind: str, shape_id: str, index: int) -> dict: ...
     async def printability(self, build_axis: str = "Z") -> dict: ...
+    async def provenance(self, source: str, active_line: int | None = None) -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -50,6 +51,11 @@ class InProcessKernel:
             return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
 
         return await asyncio.to_thread(_go)
+
+    async def provenance(self, source: str, active_line: int | None = None) -> dict:
+        from app.kernel.provenance import provenance_render
+
+        return await asyncio.to_thread(provenance_render, source, active_line)
 
     async def close(self) -> None:  # symmetry with the subprocess kernel
         return None

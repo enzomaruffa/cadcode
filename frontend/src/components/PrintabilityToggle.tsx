@@ -13,10 +13,18 @@ export function PrintabilityToggle() {
         <button className={viewMode === "technical" ? "on" : ""} onClick={() => setViewMode("technical")}>
           technical
         </button>
+        <button className={viewMode === "highlight" ? "on" : ""} onClick={() => setViewMode("highlight")}>
+          highlight
+        </button>
         <button className={viewMode === "printability" ? "on" : ""} onClick={() => setViewMode("printability")}>
           printability
         </button>
       </div>
+      {viewMode === "highlight" && (
+        <div className="viewmode-legend">
+          <span style={{ color: "#ffd23f" }}>●</span> faces from the cursor's line · click a face to jump to its code
+        </div>
+      )}
       {viewMode === "printability" && (
         <div className="viewmode-legend">
           <div className="legend-build">

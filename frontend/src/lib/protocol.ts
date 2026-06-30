@@ -80,7 +80,7 @@ export interface GeometryPayload {
   print_stats?: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
 }
 
-export type ViewMode = "technical" | "printability";
+export type ViewMode = "technical" | "printability" | "highlight";
 
 export interface ErrorPayload {
   message: string;

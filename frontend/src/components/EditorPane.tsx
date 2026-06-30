@@ -16,6 +16,8 @@ export function EditorPane() {
   const runNow = useStore((s) => s.runNow);
   const sendChat = useStore((s) => s.sendChat);
   const error = useStore((s) => s.error);
+  const setActiveLine = useStore((s) => s.setActiveLine);
+  const revealLine = useStore((s) => s.revealLine);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -55,7 +57,26 @@ export function EditorPane() {
     monacoRef.current = monaco;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runNow());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => openInline());
+    // Cursor line drives code->geometry highlighting (plan §6).
+    editor.onDidChangeCursorPosition((e) => setActiveLine(e.position.lineNumber));
   };
+
+  // Reveal + flash a line when a face is clicked in highlight mode (geometry->code).
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || revealLine == null) return;
+    editor.revealLineInCenter(revealLine);
+    editor.setPosition({ lineNumber: revealLine, column: 1 });
+    const deco = editor.createDecorationsCollection([
+      {
+        range: new monaco.Range(revealLine, 1, revealLine, 1),
+        options: { isWholeLine: true, className: "line-flash" },
+      },
+    ]);
+    const t = setTimeout(() => deco.clear(), 1200);
+    return () => clearTimeout(t);
+  }, [revealLine]);
 
   // Error squiggles on the offending line (plan §11 M1).
   useEffect(() => {

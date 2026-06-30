@@ -69,6 +69,8 @@ export function Viewport() {
 
   const shapes = useStore((s) => s.shapes);
   const rev = useStore((s) => s.geometryRev);
+  const viewMode = useStore((s) => s.viewMode);
+  const activeLine = useStore((s) => s.activeLine);
 
   // Create the Display + Viewer once.
   useEffect(() => {
@@ -99,13 +101,19 @@ export function Viewport() {
       if (Array.isArray(target)) cam.target = target as number[];
 
       // Pick capture: when the select tool reports a selection change, read the
-      // just-picked object and resolve it to a build123d selector server-side.
+      // just-picked object. In highlight mode a face-part name encodes its source
+      // line (geometry->code); otherwise resolve it to a selector server-side.
       if ("selected" in change || "selectedShapeIDs" in change) {
         const v = viewerRef.current as unknown as { lastObject?: { obj?: { name?: string } } } | null;
         const name = v?.lastObject?.obj?.name;
         if (name) {
-          const p = parsePick(name);
-          if (p) useStore.getState().sendSelect(p.kind, p.shapeId, p.index);
+          if (useStore.getState().viewMode === "highlight") {
+            const m = /L(\d+)__/.exec(name);
+            if (m) useStore.getState().setRevealLine(parseInt(m[1], 10));
+          } else {
+            const p = parsePick(name);
+            if (p) useStore.getState().sendSelect(p.kind, p.shapeId, p.index);
+          }
         }
       }
     };
@@ -156,6 +164,21 @@ export function Viewport() {
       if (typeof cam.zoom === "number") viewerOptions.zoom = cam.zoom;
     }
 
+    // Highlight mode: recolor per-face parts — faces from the cursor's line glow
+    // (code->geometry, plan §6). Part names are "L<line>__f<i>".
+    if (viewMode === "highlight") {
+      const recolor = (o: { parts?: unknown[]; name?: string; id?: string; color?: string }) => {
+        if (Array.isArray(o.parts)) {
+          o.parts.forEach((p) => recolor(p as typeof o));
+        } else {
+          const m = /L(\d+)__/.exec(o.name ?? o.id ?? "");
+          const line = m ? parseInt(m[1], 10) : -1;
+          o.color = activeLine != null && line === activeLine ? "#ffd23f" : "#3a4250";
+        }
+      };
+      recolor(shapes as unknown as { parts?: unknown[] });
+    }
+
     const vv = viewer as unknown as {
       setRaycastMode?: (f: boolean) => void;
       toggleAnimationLoop?: (f: boolean) => void;
@@ -186,7 +209,7 @@ export function Viewport() {
     } catch (e) {
       console.error("viewer.render failed", e);
     }
-  }, [rev, shapes]);
+  }, [rev, shapes, viewMode, activeLine]);
 
   return <div ref={containerRef} className="viewport" />;
 }

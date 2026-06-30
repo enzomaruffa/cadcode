@@ -261,6 +261,12 @@ body {
   display: flex;
 }
 
+/* code->geometry highlight: flash the line a clicked face came from */
+.line-flash {
+  background: rgba(255, 210, 63, 0.22);
+  transition: background 0.4s;
+}
+
 .viewport {
   flex: 1 1 auto;
   min-height: 0;

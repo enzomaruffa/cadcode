@@ -68,6 +68,8 @@ interface StoreState {
   viewMode: ViewMode;
   buildAxis: "Z" | "X" | "Y";
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
+  activeLine: number | null; // editor cursor line (drives highlight glow)
+  revealLine: number | null; // line to reveal in the editor (from a face click)
 
   chat: ChatMessage[];
   pendingPatch: AgentPatchPayload | null;
@@ -85,6 +87,8 @@ interface StoreState {
   setParam: (line: number, name: string, value: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setBuildAxis: (axis: "Z" | "X" | "Y") => void;
+  setActiveLine: (line: number | null) => void;
+  setRevealLine: (line: number | null) => void;
   sendChat: (text: string) => void;
   acceptPatch: () => void;
   rejectPatch: () => void;
@@ -119,6 +123,8 @@ export const useStore = create<StoreState>((set, get) => ({
   viewMode: "technical",
   buildAxis: "Z",
   printStats: null,
+  activeLine: null,
+  revealLine: null,
   chat: [],
   pendingPatch: null,
   agentBusy: false,
@@ -171,8 +177,11 @@ export const useStore = create<StoreState>((set, get) => ({
           }));
           // Keep the heatmap live: if we're in printability mode but just got a
           // fresh technical render (e.g. after an edit), re-request the overlay.
-          if (get().viewMode === "printability" && incomingMode === "technical") {
+          const vm = get().viewMode;
+          if (vm === "printability" && incomingMode === "technical") {
             send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
+          } else if (vm === "highlight" && incomingMode === "technical") {
+            send(SET_MODE, { mode: "highlight" });
           }
           break;
         }
@@ -238,11 +247,15 @@ export const useStore = create<StoreState>((set, get) => ({
   setViewMode: (mode) => {
     set({ viewMode: mode });
     if (mode === "printability") send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
+    else if (mode === "highlight") send(SET_MODE, { mode: "highlight" });
     else {
       set({ printStats: null });
       send(SET_MODE, { mode: "technical" });
     }
   },
+
+  setActiveLine: (line) => set({ activeLine: line }),
+  setRevealLine: (line) => set({ revealLine: line }),
 
   setBuildAxis: (axis) => {
     set({ buildAxis: axis });

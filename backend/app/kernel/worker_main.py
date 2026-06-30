@@ -57,6 +57,10 @@ def main() -> None:
             write_frame(stdout, json.dumps(_handle_printability(req)).encode())
             continue
 
+        if op == "provenance":
+            write_frame(stdout, json.dumps(_handle_provenance(req)).encode())
+            continue
+
         # op == "run"
         source = req.get("source", "")
         timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
@@ -103,6 +107,18 @@ def _handle_printability(req: dict) -> dict:
     try:
         shapes, states, bbox, stats = printability_shapes(objs, build_axis=req.get("build_axis", "Z"))
         return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _handle_provenance(req: dict) -> dict:
+    """Per-face provenance render: faces from the active line glow."""
+    from app.kernel.provenance import provenance_render
+
+    source = req.get("source", "")
+    active_line = req.get("active_line")
+    try:
+        return provenance_render(source, active_line=active_line, sandbox=True)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
 
