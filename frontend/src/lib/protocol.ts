@@ -111,36 +111,11 @@ export interface MeasurementPayload {
   error?: string;
 }
 
-export interface BBox {
-  xmin: number;
-  xmax: number;
-  ymin: number;
-  ymax: number;
-  zmin: number;
-  zmax: number;
-}
-
-// The three-cad-viewer shape tree (states embedded per-part as `state`).
-export interface TessShapes {
-  version: number;
-  parts: TessPart[];
-  loc: unknown;
-  name: string;
-  id: string;
-  bb: BBox | null;
-  [k: string]: unknown;
-}
-
-export interface TessPart {
-  id: string;
-  name: string;
-  type: string;
-  shape?: Record<string, unknown>;
-  parts?: TessPart[];
-  state?: number[];
-  color?: string;
-  [k: string]: unknown;
-}
+// The tessellation tree types are owned by the renderer package (single source
+// of truth for geometry). Import for local use here and re-export so the WS
+// protocol and the viewer agree on one definition.
+import type { BBox, TessShapes, TessPart } from "@cadcode/viewer";
+export type { BBox, TessShapes, TessPart };
 
 let counter = 0;
 export function makeId(): string {
