@@ -1,18 +1,18 @@
 """The starter build123d script a new session opens with.
 
-Small enough to read at a glance, exercises solids + a fillet + a hole + color +
-shared design tokens + executable specs, so the round-trip and CAD-as-TDD are
-visibly working the moment the app loads.
+Explicit imports (no ``import *``), inline slider-range annotations, and
+executable specs — so the round-trip, sliders, and CAD-as-TDD are all visibly
+working the moment the app loads.
 """
 
 DEFAULT_SOURCE = '''\
-from build123d import *
+from build123d import BuildPart, Box, Hole, Locations, fillet, Axis
 from lib.design import FILLET, M3_CLEARANCE_D  # shared design tokens (plan §5)
 
-# Part-specific parameters (drag the sliders to change these live).
-WIDTH = 80
-DEPTH = 50
-HEIGHT = 12
+# Part-specific parameters — the `# [min, max]` annotation drives each slider.
+WIDTH = 80   # [20, 160]
+DEPTH = 50   # [20, 120]
+HEIGHT = 12  # [4, 40]
 
 with BuildPart() as plate:
     Box(WIDTH, DEPTH, HEIGHT)
@@ -26,5 +26,5 @@ show(plate.part, name="plate", color="#9aa7ff")
 
 # Executable specs (CAD-as-TDD): the agent must keep these passing.
 require(plate.part.volume > 1000, "plate must have enough material")
-require(max(plate.part.bounding_box().size.X, plate.part.bounding_box().size.Y) <= 100, "footprint must fit in 100mm")
+require(max(plate.part.bounding_box().size.X, plate.part.bounding_box().size.Y) <= 160, "footprint must fit in 160mm")
 '''

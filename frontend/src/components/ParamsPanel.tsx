@@ -39,7 +39,10 @@ export function ParamsPanel() {
       <div className="params-grid">
         {params.map((p) => {
           const v = vals[p.name] ?? p.value;
-          const { min, max, step } = rangeFor(p.value);
+          const auto = rangeFor(p.value);
+          const min = p.min ?? auto.min;
+          const max = p.max ?? auto.max;
+          const step = p.step ?? auto.step;
           return (
             <div key={p.name} className="param-row">
               <label className="param-name">{p.name}</label>

@@ -8,6 +8,9 @@ const TREE_W = 220;
 
 const KIND: Record<string, SelectKind> = { faces: "face", edges: "edge", vertices: "vertex" };
 
+// Must match backend PROVENANCE_PALETTE (line % len) so highlight recolor agrees.
+const PROVENANCE_PALETTE = ["#5a7bd6", "#4ab0a0", "#c08a4a", "#9a6fc0", "#5aa0c0", "#b06a8a", "#7aa84a", "#c0644a"];
+
 // three-cad-viewer names objects with "|" as the path delimiter
 // (group.name = path.replaceAll("/", "|")). Shapes resolve as:
 //   "|Group|plate"            -> whole solid           -> /Group/plate
@@ -190,7 +193,10 @@ export function Viewport() {
         } else {
           const m = /L(\d+)__/.exec(o.name ?? o.id ?? "");
           const line = m ? parseInt(m[1], 10) : -1;
-          o.color = activeLine != null && line === activeLine ? "#ffd23f" : "#3a4250";
+          o.color =
+            activeLine != null && line === activeLine
+              ? "#ffd23f"
+              : PROVENANCE_PALETTE[((line % PROVENANCE_PALETTE.length) + PROVENANCE_PALETTE.length) % PROVENANCE_PALETTE.length];
         }
       };
       recolor(shapes as unknown as { parts?: unknown[] });

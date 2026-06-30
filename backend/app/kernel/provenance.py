@@ -25,6 +25,10 @@ from app.kernel.runner import SOURCE_FILENAME, _auto_collect, _make_namespace
 
 _MAX_FACES = 2000  # safety bound for the per-line snapshot cost
 
+# Deterministic per-line palette (indexed by line number); shared with the
+# frontend recolor so code->geometry highlighting stays consistent.
+PROVENANCE_PALETTE = ["#5a7bd6", "#4ab0a0", "#c08a4a", "#9a6fc0", "#5aa0c0", "#b06a8a", "#7aa84a", "#c0644a"]
+
 
 def _fp(face: Any) -> tuple:
     c = face.center()
@@ -146,11 +150,14 @@ def provenance_render(source: str, active_line: int | None = None, sandbox: bool
     if not faces:
         return {"ok": True, "shapes": {}, "states": {}, "bbox": None, "face_lines": [], "show_line": info.get("show_line")}
 
+    # Color faces by the source line that produced them (a provenance map, so
+    # the view is always informative), and make the cursor's line glow bright.
+    # Deterministic line->hue (line % palette) so the frontend recolor agrees.
     colors: list[str] = []
     names: list[str] = []
     for i, line in enumerate(face_lines):
         glow = active_line is not None and line == active_line
-        colors.append("#ffd23f" if glow else "#3a4250")
+        colors.append("#ffd23f" if glow else PROVENANCE_PALETTE[line % len(PROVENANCE_PALETTE)])
         names.append(f"L{line}__f{i}")
 
     shapes, states, bbox = tessellate(faces, names=names, colors=colors)

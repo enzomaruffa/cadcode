@@ -66,6 +66,9 @@ export interface Param {
   value: number;
   line: number;
   is_int: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 export interface GeometryPayload {

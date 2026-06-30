@@ -8,7 +8,28 @@ interaction without the hard viewport-gesture work.
 from __future__ import annotations
 
 import ast
+import re
 from typing import Any
+
+# Optional inline range annotation: `WIDTH = 28  # [10, 100]` or `# [10, 100, 2]`
+_RANGE_RE = re.compile(
+    r"#\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,\s*(-?\d+(?:\.\d+)?)\s*)?\]"
+)
+
+
+def _num(s: str) -> float | int:
+    f = float(s)
+    return int(f) if f.is_integer() else f
+
+
+def _annotation(line: str) -> dict[str, float | int] | None:
+    m = _RANGE_RE.search(line)
+    if not m:
+        return None
+    out: dict[str, float | int] = {"min": _num(m.group(1)), "max": _num(m.group(2))}
+    if m.group(3) is not None:
+        out["step"] = _num(m.group(3))
+    return out
 
 
 def _number(node: ast.expr) -> float | int | None:
@@ -27,6 +48,7 @@ def extract_params(source: str) -> list[dict[str, Any]]:
         tree = ast.parse(source)
     except SyntaxError:
         return []
+    lines = source.splitlines()
     params: list[dict[str, Any]] = []
     seen: set[str] = set()
     for node in tree.body:  # top-level only
@@ -39,12 +61,15 @@ def extract_params(source: str) -> list[dict[str, Any]]:
         if value is None or target.id in seen:
             continue
         seen.add(target.id)
-        params.append(
-            {
-                "name": target.id,
-                "value": value,
-                "line": node.lineno,
-                "is_int": isinstance(value, int),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": target.id,
+            "value": value,
+            "line": node.lineno,
+            "is_int": isinstance(value, int),
+        }
+        line_text = lines[node.lineno - 1] if 0 <= node.lineno - 1 < len(lines) else ""
+        ann = _annotation(line_text)
+        if ann:
+            entry.update(ann)
+        params.append(entry)
     return params
