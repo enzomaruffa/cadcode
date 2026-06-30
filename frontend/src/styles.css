@@ -548,6 +548,75 @@ textarea {
   overflow: hidden;
 }
 
+/* over-viewport toolbar (select / measure / section / fit) */
+.vp-toolbar {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  z-index: 5;
+}
+.vp-group {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: rgba(8, 7, 6, 0.92);
+  backdrop-filter: blur(6px);
+}
+.vp-group button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.vp-group button:hover {
+  color: var(--text);
+}
+.vp-group button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.vp-btn {
+  background: rgba(8, 7, 6, 0.92);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.vp-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.vp-slider {
+  width: 90px;
+  accent-color: var(--accent);
+}
+.measure-label {
+  background: rgba(8, 7, 6, 0.92);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
 .viewmode {
   position: absolute;
   left: var(--sp-3);

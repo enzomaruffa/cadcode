@@ -1,5 +1,6 @@
 // @cadcode/viewer — cadcode's own three.js renderer for OCP tessellation.
-export { CadViewer } from "./core/CadViewer";
+export { CadViewer, type InteractionMode } from "./core/CadViewer";
+export type { SectionAxis } from "./interaction/Section";
 export { CadCanvas } from "./react/CadCanvas";
 export type { CadCanvasProps, CadCanvasHandle, RenderProfile, ViewMode } from "./react/CadCanvas";
 export { TECHNICAL, PRESENTATION, PREVIEW, DEFAULT_COLOR } from "./materials/materials";

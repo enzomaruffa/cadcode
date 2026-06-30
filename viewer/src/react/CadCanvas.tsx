@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { CadViewer } from "../core/CadViewer";
+import { CadViewer, type InteractionMode } from "../core/CadViewer";
 import { TECHNICAL, PRESENTATION } from "../materials/materials";
+import type { SectionAxis } from "../interaction/Section";
 import type { NotifyChange, PickEvent, RenderPreset, TessShapes, ViewerOptions } from "../core/types";
 
 export type RenderProfile = "technical" | "presentation";
@@ -25,6 +26,9 @@ export interface CadCanvasHandle {
   fitView: () => void;
   getCameraState: () => ViewerOptions;
   setCameraState: (c: ViewerOptions) => void;
+  setSection: (axis: SectionAxis | null, offset?: number) => void;
+  setMode: (mode: InteractionMode) => void;
+  clearMeasure: () => void;
 }
 
 const presetFor = (p: RenderProfile | undefined): RenderPreset => (p === "presentation" ? PRESENTATION : TECHNICAL);
@@ -48,6 +52,9 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     fitView: () => viewerRef.current?.fit(),
     getCameraState: () => viewerRef.current?.getCameraState() ?? {},
     setCameraState: (c) => viewerRef.current?.setCameraState(c),
+    setSection: (axis, offset) => viewerRef.current?.setSection(axis, offset),
+    setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
+    clearMeasure: () => viewerRef.current?.clearMeasure(),
   }));
 
   // Create the viewer once.

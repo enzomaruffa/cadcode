@@ -12,6 +12,10 @@ import { Post } from "../materials/postprocessing";
 import { applyHighlight } from "../materials/colorApi";
 import { InteractionController, type SelectTopo } from "../interaction/InteractionController";
 import { SelectionHighlight } from "../interaction/SelectionHighlight";
+import { Section, type SectionAxis } from "../interaction/Section";
+import { Measure } from "../interaction/Measure";
+
+export type InteractionMode = "select" | "measure";
 
 const DPR_CAP = 2;
 
@@ -35,6 +39,9 @@ export class CadViewer {
   private shadow: ShadowStage;
   private post: Post;
   private selection: SelectionHighlight;
+  private section: Section;
+  private measure: Measure;
+  private mode: InteractionMode = "select";
 
   private framedOnce = false;
   private rafId: number | null = null;
@@ -70,6 +77,8 @@ export class CadViewer {
     this.lights.applyPreset(this.preset);
     this.shadow = new ShadowStage(this.scene);
     this.selection = new SelectionHighlight(this.scene, this.resolution);
+    this.section = new Section(this.scene);
+    this.measure = new Measure(this.scene, container);
 
     this.controller = new InteractionController(
       this.renderer.domElement,
@@ -95,6 +104,8 @@ export class CadViewer {
     this.sceneGraph = sg;
     this.scene.add(sg.root);
     this.applyPreset(sg.bbox);
+    this.section.fitTo(sg.bbox);
+    this.applyClipping();
     this.controller.setTargets(sg.leaves);
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
@@ -126,8 +137,13 @@ export class CadViewer {
     this.sceneGraph = null;
   }
 
-  // A pick both highlights locally (instant feedback) and notifies the host.
+  // A pick either feeds the measure tool or highlights + notifies the host.
   private onPick(p: PickEvent): void {
+    if (this.mode === "measure") {
+      if (p.point) this.measure.addPoint(p.point);
+      this.requestRender();
+      return;
+    }
     const leaf = this.sceneGraph?.leafById.get(p.shapeId);
     if (leaf) {
       if (p.kind === "edge") this.selection.showEdge(leaf, p.index);
@@ -163,6 +179,7 @@ export class CadViewer {
     // (crisp, literal colors). Diagnostic modes keep AO off via their presets.
     if (this.preset.aoEnabled) this.post.render();
     else this.renderer.render(this.scene, this.rig.camera);
+    this.measure.render(this.scene, this.rig.camera);
   }
 
   // --- camera ---------------------------------------------------------------
@@ -218,6 +235,7 @@ export class CadViewer {
     this.rig.setAspect(width, height);
     this.resolution.set(width * dpr, height * dpr);
     this.post?.setSize(width, height);
+    this.measure?.setSize(width, height);
     if (this.sceneGraph) {
       for (const mat of this.sceneGraph.lineMaterials) (mat as LineMaterial).resolution.copy(this.resolution);
     }
@@ -230,6 +248,32 @@ export class CadViewer {
 
   setSelectTopo(topo: SelectTopo): void {
     this.controller.setTopo(topo);
+  }
+
+  /** Section/clipping plane along an axis (offset 0..1), or null to disable. */
+  setSection(axis: SectionAxis | null, offset = 0.5): void {
+    if (axis) this.section.set(axis, offset);
+    else this.section.disable();
+    this.applyClipping();
+    this.requestRender();
+  }
+
+  setInteractionMode(mode: InteractionMode): void {
+    this.mode = mode;
+  }
+
+  clearMeasure(): void {
+    this.measure.clear();
+    this.requestRender();
+  }
+
+  private applyClipping(): void {
+    if (!this.sceneGraph) return;
+    const planes = this.section.planes;
+    for (const leaf of this.sceneGraph.leaves) {
+      if (leaf.front) (leaf.front.material as THREE.Material).clippingPlanes = planes;
+      if (leaf.back) (leaf.back.material as THREE.Material).clippingPlanes = planes;
+    }
   }
 
   /** Cheap highlight-mode recolor (glow the active line's faces) — no rebuild. */
@@ -250,6 +294,8 @@ export class CadViewer {
     this.lights.dispose();
     this.shadow.dispose();
     this.selection.dispose();
+    this.section.dispose();
+    this.measure.dispose();
     this.post.dispose();
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
