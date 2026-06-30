@@ -25,7 +25,7 @@ from app.tessellate import tessellate
 SOURCE_FILENAME = "<cad-source>"
 
 
-def _make_namespace() -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]]]:
+def _make_namespace(builtins_override: Any = None) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]]]:
     """Build the exec globals, including the ``show`` collectors."""
     shown: list[tuple[Any, str | None, Any]] = []
 
@@ -44,7 +44,7 @@ def _make_namespace() -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]]
 
     ns: dict[str, Any] = {
         "__name__": "__cad__",
-        "__builtins__": __builtins__,
+        "__builtins__": builtins_override if builtins_override is not None else __builtins__,
         "show": show,
         "show_object": show_object,
         "bd": _bd,
@@ -92,9 +92,22 @@ def _error_line(exc: BaseException) -> int | None:
     return line
 
 
-def run_source(source: str) -> RunResult:
-    """Execute ``source`` and return geometry or a structured error."""
-    ns, shown = _make_namespace()
+def run_source(source: str, *, sandbox: bool = False) -> RunResult:
+    """Execute ``source`` and return geometry or a structured error.
+
+    With ``sandbox=True`` the import allowlist is enforced statically and the
+    exec namespace gets restricted builtins (plan §7)."""
+    builtins_override = None
+    if sandbox:
+        from app.kernel.sandbox import SandboxError, check_imports, safe_builtins
+
+        try:
+            check_imports(source)
+        except SandboxError as exc:
+            return RunResult.failure(f"SandboxError: {exc}", line=exc.line)
+        builtins_override = safe_builtins()
+
+    ns, shown = _make_namespace(builtins_override)
     buf = io.StringIO()
     try:
         code = compile(source, SOURCE_FILENAME, "exec")

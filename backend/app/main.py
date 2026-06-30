@@ -8,17 +8,33 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__, protocol as P
 from app.default_model import DEFAULT_SOURCE
+from app.kernel import SubprocessKernel
 from app.session import Session
 
 log = logging.getLogger("cadcode")
 
-app = FastAPI(title="cadcode backend", version=__version__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # One sandboxed worker, shared across sessions and warmed at startup so the
+    # first edit renders without paying the OpenCASCADE cold-import cost.
+    kernel = SubprocessKernel()
+    app.state.kernel = kernel
+    try:
+        yield
+    finally:
+        await kernel.close()
+
+
+app = FastAPI(title="cadcode backend", version=__version__, lifespan=lifespan)
 
 # Dev only: Vite serves the frontend on a different origin.
 app.add_middleware(
@@ -47,7 +63,8 @@ async def ws(websocket: WebSocket) -> None:
     async def send(env: P.Envelope) -> None:
         await websocket.send_text(env.model_dump_json())
 
-    session = Session(source=DEFAULT_SOURCE, send=send)
+    # Share the warmed, sandboxed kernel across sessions.
+    session = Session(source=DEFAULT_SOURCE, send=send, kernel=websocket.app.state.kernel)
 
     # Push the initial geometry so the viewport isn't empty on connect.
     await session.run_current()
@@ -63,5 +80,3 @@ async def ws(websocket: WebSocket) -> None:
             await session.handle(env)
     except WebSocketDisconnect:
         log.info("client disconnected")
-    finally:
-        await session.kernel.close()
