@@ -1,14 +1,21 @@
 import { create } from "zustand";
 import { EDIT_DEBOUNCE_MS, HTTP_URL, WS_URL } from "../config";
 import {
+  ACCEPT_PATCH,
+  AGENT_MESSAGE,
+  AGENT_PATCH,
+  CHAT,
   EDIT,
   ERROR,
   GEOMETRY,
   MEASUREMENT,
+  REJECT_PATCH,
   RUN,
   SELECT,
   STATUS,
   makeId,
+  type AgentMessagePayload,
+  type AgentPatchPayload,
   type Envelope,
   type ErrorPayload,
   type GeometryPayload,
@@ -17,6 +24,12 @@ import {
   type StatusPayload,
   type TessShapes,
 } from "./protocol";
+
+export interface ChatMessage {
+  role: "assistant" | "user";
+  text: string;
+  error?: boolean;
+}
 
 type Conn = "connecting" | "open" | "closed";
 type RunState = "idle" | "running" | "ok" | "error";
@@ -39,11 +52,18 @@ interface StoreState {
   stdout: string;
   selection: MeasurementPayload | null;
 
+  chat: ChatMessage[];
+  pendingPatch: AgentPatchPayload | null;
+  agentBusy: boolean;
+
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   runNow: () => void;
   sendSelect: (kind: SelectKind, shapeId: string, index: number) => void;
   clearSelection: () => void;
+  sendChat: (text: string) => void;
+  acceptPatch: () => void;
+  rejectPatch: () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -66,6 +86,9 @@ export const useStore = create<StoreState>((set, get) => ({
   error: null,
   stdout: "",
   selection: null,
+  chat: [],
+  pendingPatch: null,
+  agentBusy: false,
 
   connect: () => {
     // Guard against React StrictMode's double-invoke opening two sockets.
@@ -123,6 +146,15 @@ export const useStore = create<StoreState>((set, get) => ({
           set({ selection: env.payload as unknown as MeasurementPayload });
           break;
         }
+        case AGENT_MESSAGE: {
+          const p = env.payload as unknown as AgentMessagePayload;
+          set((s) => ({ chat: [...s.chat, { role: p.role, text: p.text, error: p.error }], agentBusy: false }));
+          break;
+        }
+        case AGENT_PATCH: {
+          set({ pendingPatch: env.payload as unknown as AgentPatchPayload, agentBusy: false });
+          break;
+        }
         default:
           break;
       }
@@ -147,6 +179,30 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   clearSelection: () => set({ selection: null }),
+
+  sendChat: (text) => {
+    const t = text.trim();
+    if (!t) return;
+    set((s) => ({ chat: [...s.chat, { role: "user", text: t }], agentBusy: true }));
+    send(CHAT, { message: t });
+  },
+
+  acceptPatch: () => {
+    const patch = get().pendingPatch;
+    if (!patch) return;
+    // Update the editor to the agent's source (the backend applies + re-runs).
+    set((s) => ({
+      source: patch.new_source,
+      pendingPatch: null,
+      chat: [...s.chat, { role: "assistant", text: "✓ patch accepted" }],
+    }));
+    send(ACCEPT_PATCH, { new_source: patch.new_source });
+  },
+
+  rejectPatch: () => {
+    set((s) => ({ pendingPatch: null, chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }] }));
+    send(REJECT_PATCH, {});
+  },
 }));
 
 // Expose for debugging / E2E.

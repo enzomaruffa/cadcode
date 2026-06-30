@@ -11,12 +11,29 @@ export const EDIT = "edit";
 export const RUN = "run";
 export const SELECT = "select";
 export const CHAT = "chat";
+export const ACCEPT_PATCH = "accept_patch";
+export const REJECT_PATCH = "reject_patch";
 
 // backend -> frontend
 export const GEOMETRY = "geometry";
 export const ERROR = "error";
 export const STATUS = "status";
 export const MEASUREMENT = "measurement";
+export const AGENT_MESSAGE = "agent_message";
+export const AGENT_PATCH = "agent_patch";
+
+export interface AgentMessagePayload {
+  role: "assistant" | "user";
+  text: string;
+  error?: boolean;
+}
+
+export interface AgentPatchPayload {
+  diff: string;
+  rationale: string;
+  targets: string[];
+  new_source: string;
+}
 
 export interface GeometryPayload {
   shapes: TessShapes;

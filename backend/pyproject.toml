@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = [
-    "pydantic-ai-slim[anthropic]>=0.0.30",
+    "pydantic-ai-slim[anthropic,google]>=2.1.0",
 ]
 dev = [
     "pytest>=8.0",

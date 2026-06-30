@@ -8,20 +8,40 @@ and the viewport can never fork reality.
 
 from __future__ import annotations
 
+import difflib
+import logging
 from typing import Any, Awaitable, Callable
 
 from app import protocol as P
 from app.document import Document
 from app.kernel import InProcessKernel, Kernel, RunResult
 
+log = logging.getLogger("cadcode.session")
+
 Sender = Callable[[P.Envelope], Awaitable[None]]
 
 
+def _unified_diff(old: str, new: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile="current",
+            tofile="proposed",
+        )
+    )
+
+
 class Session:
-    def __init__(self, source: str, send: Sender, kernel: Kernel | None = None) -> None:
+    def __init__(self, source: str, send: Sender, kernel: Kernel | None = None, agent_model: Any | None = None) -> None:
         self.doc = Document(source=source)
         self.kernel = kernel or InProcessKernel()
         self._send = send
+        # Agent state.
+        self._agent: Any | None = None
+        self._agent_model = agent_model  # override for tests (e.g. TestModel)
+        self._pending_source: str | None = None
+        self.selection: dict | None = None  # last viewport pick, fed to the agent
 
     # --- outbound helpers ---------------------------------------------------
 
@@ -94,4 +114,58 @@ class Session:
     async def _on_select(self, env: P.Envelope) -> None:
         sel = P.SelectPayload(**env.payload)
         measurement = await self.kernel.measure_selection(sel.kind, sel.shape_id, sel.index)
+        if "error" not in measurement:
+            self.selection = measurement  # ground the agent on what's picked
         await self.send(P.MEASUREMENT, measurement, env.id)
+
+    # --- agent ---------------------------------------------------------------
+
+    def _agent_instance(self) -> Any:
+        if self._agent is None:
+            from app.agent import build_agent
+
+            self._agent = build_agent(self._agent_model)
+        return self._agent
+
+    async def _on_chat(self, env: P.Envelope) -> None:
+        message = P.ChatPayload(**env.payload).message
+        await self.send(P.STATUS, P.StatusPayload(state="running", detail="agent thinking…").model_dump())
+        try:
+            from app.agent import CadDeps
+
+            agent = self._agent_instance()
+            deps = CadDeps(source=self.doc.source, kernel=self.kernel, selection=self.selection)
+            result = await agent.run(message, deps=deps)
+            patch = result.output
+        except Exception as exc:  # noqa: BLE001 - surface agent/auth errors to the chat
+            log.warning("agent run failed: %s", exc)
+            await self.send(
+                P.AGENT_MESSAGE,
+                {"role": "assistant", "text": f"⚠️ Agent error: {exc}", "error": True},
+                env.id,
+            )
+            await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+            return
+
+        self._pending_source = patch.new_source
+        diff = _unified_diff(self.doc.source, patch.new_source)
+        await self.send(P.AGENT_MESSAGE, {"role": "assistant", "text": patch.rationale}, env.id)
+        await self.send(
+            P.AGENT_PATCH,
+            {"diff": diff, "rationale": patch.rationale, "targets": patch.targets, "new_source": patch.new_source},
+            env.id,
+        )
+        await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+
+    async def _on_accept_patch(self, env: P.Envelope) -> None:
+        new_source = env.payload.get("new_source") or self._pending_source
+        if not new_source:
+            await self.send(P.STATUS, P.StatusPayload(state="idle", detail="no pending patch").model_dump(), env.id)
+            return
+        self._pending_source = None
+        self.doc.set_source(new_source)
+        await self.run_current(env.id)
+
+    async def _on_reject_patch(self, env: P.Envelope) -> None:
+        self._pending_source = None
+        await self.send(P.STATUS, P.StatusPayload(state="ok", detail="patch rejected").model_dump(), env.id)
