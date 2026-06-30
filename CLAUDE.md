@@ -13,7 +13,8 @@ The full v0 from `cad-platform-v0-plan.md` is built and working. Issue tracking 
 cd backend && uv sync --extra agent
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8787   # 8000 is often taken; frontend expects 8787
 
-# Frontend (Vite + React + Monaco + three-cad-viewer)
+# Frontend (Vite + React + Monaco + our own @cadcode/viewer renderer)
+cd viewer && npm install                                    # the renderer package has its own deps (three)
 cd frontend && npm install && npm run dev                   # http://localhost:5173
 
 # Checks
@@ -29,20 +30,30 @@ The agent uses **Gemini 3.5 Flash** by default (`google:gemini-3.5-flash`); over
 
 - `protocol.py` — the one WS envelope + message types (§8). `session.py` — per-socket dispatch (the `apply_edit → run → tessellate → render` spine). `main.py` — FastAPI app, WS, `/library` endpoint, shared warmed kernel lifespan.
 - `kernel/` — `runner.py` (exec build123d, `show()`/`require()` collectors, provenance-friendly), `sandbox.py` (AST allowlist + restricted builtins), `subprocess_kernel.py` + `worker_main.py` (isolated worker, SIGALRM timeout, op dispatch: run/select/printability/provenance/geomdiff), `select.py` (pick → measure + selector synthesis), `printability.py` (overhang heatmap), `provenance.py` (line↔face), `geomdiff.py` (boolean added/removed).
-- `tessellate.py` — build123d → three-cad-viewer shapes (ocp-tessellate; `numpy_to_json`; states embedded per-part). `gitstore.py` — checkpoints. `library.py` + `thumbnail.py` — parts catalog + iso SVGs. `params.py` — slider extraction. `agent/cad_agent.py` — PydanticAI agent (typed `CadDeps`, validated `Patch`, self-correct + spec-integrity validator).
+- `tessellate.py` — build123d → ocp-tessellate shapes tree consumed by our renderer (`numpy_to_json`; states embedded per-part; `triangles_per_face`/`segments_per_edge` drive per-face/edge picking). `gitstore.py` — checkpoints. `library.py` + `thumbnail.py` — parts catalog + iso SVGs. `params.py` — slider extraction. `agent/cad_agent.py` — PydanticAI agent (typed `CadDeps`, validated `Patch`, self-correct + spec-integrity validator).
 - `lib/` — shared `design.py` tokens + `parts/` catalog (on `PYTHONPATH`, allowlisted in the sandbox).
+
+### The 3D renderer (`viewer/` — our own `@cadcode/viewer`)
+
+We render OCP tessellation with our **own three.js renderer** (top-level `viewer/` package, its own deps, consumed by the app via the Vite alias `@cadcode/viewer` → `viewer/src/index.ts`; `frontend/vite.config.ts` also dedupes react/react-dom/three). `three-cad-viewer` is gone. The two call sites are `Viewport.tsx` and `PartPreview.tsx`, both mounting one React component `CadCanvas` (wrapping the framework-agnostic `CadViewer`). The store contract is unchanged: a pick still calls `sendSelect(kind, shapeId, index)`; highlight picks call `setRevealLine`.
+
+- `viewer/src/core/` — `CadViewer` (renderer/scene/camera/on-demand loop/lifecycle), `SceneGraph`+`leaf`+`buildGeometry` (tree → one **indexed** mesh per leaf — never merged or per-face-split, so `faceIndex` maps 1:1 to a triangle), `CameraRig` (ortho+persp, Z-up iso, camera persists across rebuilds), `Controls` (OrbitControls), `dispose`.
+- `viewer/src/materials/` — PBR `materials`, `lighting` (key/fill/rim headlight + RoomEnvironment IBL), `shadows` (ShadowMaterial ground), `postprocessing` (EffectComposer: GTAO+SMAA+OutputPass for presentation), `colorApi` (per-leaf colors + cheap `applyHighlight` active-line glow + `applyFaceColors`).
+- `viewer/src/interaction/` — `Picker`+`InteractionController` (raycast → OCP face/edge/vertex via prefix-sums), `SelectionHighlight`, `Section` (clipping planes), `Measure` (CSS2D dims).
 
 ### Gotchas learned the hard way
 
-- **three-cad-viewer per-part only:** per-face color/highlight is done by tessellating faces as *individual parts* (see printability/highlight modes). Single-mesh per-face highlight isn't feasible — that constraint shaped M2/M6.
-- **Selection needs the full tool setup:** `viewer.setRaycastMode(true)` + `cadTools.enable("SelectObjects")` + `toggleAnimationLoop(true)` — `cadTools.enable` alone leaves the raycaster null.
-- **No React StrictMode** — three-cad-viewer/Monaco are imperative singletons; the double-mount corrupts them. Call `viewer.clear()` before re-render.
-- **Object names use `|` as the path delimiter** (`group.name = path.replaceAll("/", "|")`); default viewport picks resolve to the whole solid, faces to per-face parts.
+- **Per-face picking is precise now:** raycast `intersection.faceIndex` → OCP face via the prefix-sum of `triangles_per_face`. Leaf geometry must stay **indexed and unmerged** for this to hold (no `toNonIndexed`, no per-face explosion). Per-face color is done in-renderer (vertex colors / per-leaf), not by tessellating each face as its own part.
+- **`edges` arrives nested** (`[[x,y,z],[x,y,z]]` per segment) — flatten before `LineSegmentsGeometry.setPositions`; tessellation arrays are plain JSON numbers, so wrap in `Float32Array`/`Uint32Array`. Don't call `computeLineDistances()` on solid `LineSegments2` (NaN bounding sphere → culled edges).
+- **No React StrictMode** — `CadViewer`/Monaco are imperative singletons; the double-mount corrupts them.
+- **Object names still use `|` as the path delimiter** (`group.name = id.replaceAll("/", "|")`) — preserved so `parsePick`/highlight name parsing (`L<line>__f<i>`) still works.
+- **Diagnostic view modes force the flat preset** (no AO/tone-mapping) so printability/provenance/geomdiff colors stay literal; presentation (✨) only applies to the `technical` view mode.
+- **Editor theme is configurable:** `frontend/src/lib/editorTheme.ts` defines the `cadcode` Monaco theme from token colors (persisted in localStorage; live picker in the File menu). Fonts are self-hosted Geist in `frontend/public/fonts/`.
 - `window.__store` / `window.__viewer` / `window.monaco` are exposed for debugging/E2E.
 
 ## What this project is
 
-An AI-native, code-first CAD environment where **the canvas *is* code**. A React/TS frontend (Monaco editor + `three-cad-viewer` viewport + agent chat) talks over a single WebSocket to a FastAPI backend that runs **build123d** Python in a sandboxed kernel worker, with a server-side **PydanticAI** agent as a peer editor. Output: 3D-printable parts, with a printability overlay as the differentiating feature.
+An AI-native, code-first CAD environment where **the canvas *is* code**. A React/TS frontend (Monaco editor + our own `@cadcode/viewer` viewport + agent chat) talks over a single WebSocket to a FastAPI backend that runs **build123d** Python in a sandboxed kernel worker, with a server-side **PydanticAI** agent as a peer editor. Output: 3D-printable parts, with a printability overlay as the differentiating feature.
 
 ## The one invariant — enforce this above all else
 
@@ -59,11 +70,11 @@ If a proposed change would let any of the three editors fork reality, or would p
 
 ## Architecture (three processes)
 
-- **Frontend (React + TS + Vite):** Monaco editor pane, `three-cad-viewer` viewport, agent chat + diff panel, history timeline, one WebSocket client.
+- **Frontend (React + TS + Vite):** Monaco editor pane, our own `@cadcode/viewer` (three.js) viewport, agent chat + diff panel, history timeline, one WebSocket client.
 - **Backend (FastAPI, async):** WebSocket gateway (one socket per session), in-memory document/buffer state (no database in v0), the PydanticAI agent service, git integration, part library on `PYTHONPATH`.
 - **Kernel worker (isolated subprocess):** runs the build123d script in a *separate process* so a hang/loop/OOM can't take the backend down. Returns `{meshes, ops, measurements}` or `{error: traceback+line}`. Uses the `build123d-mcp` sandbox pattern (AST import allowlist, restricted builtins, `SIGALRM` timeout, restart-on-breach).
 
-Render pipeline: `build123d objects → ocp-tessellate (mesh + topology indices) → WebSocket → three-cad-viewer`. The geometry math is done by those two libraries — the work here is the glue and the protocol.
+Render pipeline: `build123d objects → ocp-tessellate (mesh + topology indices) → WebSocket → our @cadcode/viewer (three.js)`. ocp-tessellate does the meshing; the viewer (`viewer/`) is ours.
 
 ## Locked tech-stack decisions (don't relitigate or reinvent)
 
@@ -71,7 +82,7 @@ Render pipeline: `build123d objects → ocp-tessellate (mesh + topology indices)
 |---|---|
 | Frontend | React + TS + Vite |
 | Editor | **Monaco** — do not hand-roll an editor |
-| Viewport | **three-cad-viewer** — do not build a viewer from scratch (months of work already done) |
+| Viewport | **our own `@cadcode/viewer`** (three.js) in `viewer/` — replaced three-cad-viewer for precise per-face picking + a prettier render |
 | Backend | **FastAPI** (async, WS, Pydantic protocol models) |
 | Agent | **PydanticAI** (+ Logfire/OTel); tools implemented **natively** in-process but as thin wrappers so they can be exposed over MCP later |
 | Kernel | **build123d** + **bd_warehouse** |

@@ -14,12 +14,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "types": [],
-    "baseUrl": ".",
-    "paths": {
-      "@cadcode/viewer": ["../viewer/src/index.ts"]
-    }
+    "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "../viewer/src"]
+  "include": ["src"]
 }

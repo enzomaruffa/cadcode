@@ -8,6 +8,7 @@ import { PrintabilityToggle } from "./components/PrintabilityToggle";
 import { AgentPanel } from "./components/AgentPanel";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { LibraryModal } from "./components/LibraryModal";
+import { EditorColorsModal } from "./components/EditorColorsModal";
 import { FileMenu } from "./components/FileMenu";
 import { HistoryControls } from "./components/HistoryControls";
 import { useStore } from "./lib/store";
@@ -64,6 +65,7 @@ export default function App() {
   const [agentW, setAgentW] = useState(320);
   const [codeW, setCodeW] = useState(460);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showColors, setShowColors] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,7 +85,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <FileMenu />
+        <FileMenu onEditorColors={() => setShowColors(true)} />
         <span className="brand">cadcode</span>
         <span className="tagline">the canvas is code</span>
         <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">
@@ -134,6 +136,7 @@ export default function App() {
 
       <StatusBar />
       {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
+      {showColors && <EditorColorsModal onClose={() => setShowColors(false)} />}
     </div>
   );
 }

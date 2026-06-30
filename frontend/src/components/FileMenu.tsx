@@ -19,7 +19,7 @@ function download(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function FileMenu() {
+export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -110,6 +110,17 @@ export function FileMenu() {
               {busy === e.fmt ? `exporting ${e.fmt}…` : e.label}
             </button>
           ))}
+          <div className="menu-sep" />
+          <div className="menu-label">Preferences</div>
+          <button
+            className="menu-item"
+            onClick={() => {
+              onEditorColors();
+              setOpen(false);
+            }}
+          >
+            Editor colors…
+          </button>
         </div>
       )}
     </div>
