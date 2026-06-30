@@ -428,6 +428,49 @@ body {
   color: var(--text-dim);
 }
 
+.selpanel-gesture {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.gesture-amount {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gesture-slider {
+  flex: 1 1 auto;
+  accent-color: var(--accent);
+}
+.gesture-val {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  width: 42px;
+  text-align: right;
+}
+.gesture-ops {
+  display: flex;
+  gap: 5px;
+}
+.gesture-go {
+  flex: 1 1 auto;
+  background: #1c232d;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.gesture-go:hover {
+  border-color: var(--accent);
+}
+
 .selpanel-props {
   margin: 0;
   display: grid;

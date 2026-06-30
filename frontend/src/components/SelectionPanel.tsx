@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useStore } from "../lib/store";
 
 function fmt(v: unknown): string {
@@ -9,6 +10,8 @@ function fmt(v: unknown): string {
 export function SelectionPanel() {
   const selection = useStore((s) => s.selection);
   const clear = useStore((s) => s.clearSelection);
+  const sendChat = useStore((s) => s.sendChat);
+  const [extrude, setExtrude] = useState(5);
   if (!selection) return null;
 
   if (selection.error) {
@@ -41,6 +44,60 @@ export function SelectionPanel() {
         <div className="selpanel-selector">
           <code>{selection.selector}</code>
           <span className={`selpanel-conf conf-${selection.selector_confidence}`}>{selection.selector_confidence}</span>
+        </div>
+      ) : null}
+
+      {selection.selector ? (
+        <div className="selpanel-gesture">
+          <div className="gesture-amount">
+            <input
+              className="gesture-slider"
+              type="range"
+              min={-20}
+              max={40}
+              step={0.5}
+              value={extrude}
+              onChange={(e) => setExtrude(parseFloat(e.target.value))}
+            />
+            <span className="gesture-val">{extrude}mm</span>
+          </div>
+          <div className="gesture-ops">
+            {selection.kind === "face" && (
+              <button
+                className="gesture-go"
+                onClick={() =>
+                  sendChat(
+                    `Extrude the face selected via \`${selection.selector}\` (${selection.description ?? "face"}) ` +
+                      `outward by ${extrude}mm and fuse the new material to the part. Keep everything else unchanged.`,
+                  )
+                }
+              >
+                extrude
+              </button>
+            )}
+            <button
+              className="gesture-go"
+              onClick={() =>
+                sendChat(
+                  `Add a ${Math.abs(extrude)}mm fillet to the ${selection.kind} selected via \`${selection.selector}\` ` +
+                    `(${selection.description ?? ""}). Keep everything else unchanged.`,
+                )
+              }
+            >
+              fillet
+            </button>
+            <button
+              className="gesture-go"
+              onClick={() =>
+                sendChat(
+                  `Add a ${Math.abs(extrude)}mm chamfer to the ${selection.kind} selected via \`${selection.selector}\` ` +
+                    `(${selection.description ?? ""}). Keep everything else unchanged.`,
+                )
+              }
+            >
+              chamfer
+            </button>
+          </div>
         </div>
       ) : null}
 
