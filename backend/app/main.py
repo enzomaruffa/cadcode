@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__, protocol as P
 from app.default_model import DEFAULT_SOURCE
@@ -20,6 +23,10 @@ from app.kernel import SubprocessKernel
 from app.session import Session
 
 log = logging.getLogger("cadcode")
+
+# When the built frontend is present (production image), serve it from this app
+# so everything is one origin (the frontend then uses same-origin WS).
+STATIC_DIR = Path(os.environ.get("CAD_STATIC_DIR", Path(__file__).resolve().parents[1] / "static"))
 
 
 @asynccontextmanager
@@ -100,3 +107,10 @@ async def ws(websocket: WebSocket) -> None:
             await session.handle(env)
     except WebSocketDisconnect:
         log.info("client disconnected")
+
+
+# Serve the built SPA last so the API/WS routes above take precedence. html=True
+# makes "/" return index.html (and unknown paths fall back to it for the SPA).
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="spa")
+    log.info("serving static frontend from %s", STATIC_DIR)

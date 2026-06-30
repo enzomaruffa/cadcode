@@ -1,0 +1,20 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cadcode:latest
+    restart: unless-stopped
+    # Bind to localhost only; the Cloudflare tunnel fronts it (cad.enzomaruffa.dev).
+    ports:
+      - "127.0.0.1:21310:8000"
+    environment:
+      # Agent model + key (set GEMINI_API_KEY in .env on the host).
+      CAD_AGENT_MODEL: ${CAD_AGENT_MODEL:-google:gemini-3.5-flash}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      # Persist git checkpoints across restarts.
+      - cad-workspace:/data/workspace
+
+volumes:
+  cad-workspace:

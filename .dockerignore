@@ -1,0 +1,14 @@
+**/.git
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+backend/.workspace
+frontend/dist
+.beads
+.playwright-mcp
+*.png
+.DS_Store
+.claude
+.agents
+.codex

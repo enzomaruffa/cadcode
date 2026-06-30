@@ -25,3 +25,6 @@ backend/.workspace/
 *.png
 .playwright-mcp/
 .DS_Store
+
+# Built SPA copied into the backend at image-build time
+backend/static/
