@@ -108,19 +108,29 @@ export function EditorPane() {
       <Editor
         className="editor"
         language="python"
-        theme="vs-dark"
+        theme="cadcode"
         value={source}
         onChange={(v) => setSource(v ?? "")}
         onMount={onMount}
         options={{
-          fontSize: 13,
-          fontFamily: '"SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace',
+          fontSize: 13.5,
+          lineHeight: 21,
+          letterSpacing: 0.2,
+          fontFamily: '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+          fontLigatures: false,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
           automaticLayout: true,
           tabSize: 4,
           renderWhitespace: "none",
+          renderLineHighlight: "all",
+          roundedSelection: true,
           smoothScrolling: true,
+          cursorSmoothCaretAnimation: "on",
+          cursorBlinking: "smooth",
+          padding: { top: 14, bottom: 14 },
+          scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
+          guides: { indentation: true },
         }}
       />
       {inline && (
