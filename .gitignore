@@ -4,3 +4,21 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Python / backend
+__pycache__/
+*.py[cod]
+.venv/
+backend/.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Verification / scratch artifacts
+*.png
+.playwright-mcp/
+.DS_Store
