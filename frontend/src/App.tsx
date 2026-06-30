@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { EditorPane } from "./components/EditorPane";
 import { Viewport } from "./components/Viewport";
 import { StatusBar } from "./components/StatusBar";
+import { SelectionPanel } from "./components/SelectionPanel";
 import { useStore } from "./lib/store";
 
 export default function App() {
@@ -24,7 +25,10 @@ export default function App() {
         </section>
         <section className="pane pane-viewport">
           <div className="pane-title">geometry</div>
-          <Viewport />
+          <div className="viewport-wrap">
+            <Viewport />
+            <SelectionPanel />
+          </div>
         </section>
       </div>
       <StatusBar />

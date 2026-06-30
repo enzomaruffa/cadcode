@@ -90,3 +90,8 @@ class Session:
 
     async def _on_run(self, env: P.Envelope) -> None:
         await self.run_current(env.id)
+
+    async def _on_select(self, env: P.Envelope) -> None:
+        sel = P.SelectPayload(**env.payload)
+        measurement = await self.kernel.measure_selection(sel.kind, sel.shape_id, sel.index)
+        await self.send(P.MEASUREMENT, measurement, env.id)

@@ -24,6 +24,12 @@ from app.tessellate import tessellate
 
 SOURCE_FILENAME = "<cad-source>"
 
+# Objects from the most recent successful run, keyed by their shape-tree id
+# (e.g. "/Group/plate"). Lets a follow-up `select` resolve a pick against the
+# live OCP topology without re-running. Lives in whatever process ran the
+# script (the worker), since OCP objects don't cross the process boundary.
+LAST_SHOWN: dict[str, Any] = {}
+
 
 def _make_namespace(builtins_override: Any = None) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]]]:
     """Build the exec globals, including the ``show`` collectors."""
@@ -131,6 +137,12 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     except Exception as exc:  # noqa: BLE001
         full = "".join(tb_mod.format_exception(type(exc), exc, exc.__traceback__))
         return RunResult.failure(f"Tessellation failed: {exc}", traceback=_clean_traceback(full), stdout=buf.getvalue())
+
+    # Cache objects by leaf id (states keys are leaf ids in tessellation order)
+    # so a follow-up select can resolve a pick against the live topology.
+    LAST_SHOWN.clear()
+    for leaf_id, obj in zip(states.keys(), objs):
+        LAST_SHOWN[leaf_id] = obj
 
     return RunResult.success(shapes, states, bbox, stdout=buf.getvalue())
 

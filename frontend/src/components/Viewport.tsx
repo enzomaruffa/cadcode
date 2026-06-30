@@ -2,8 +2,38 @@ import { useEffect, useRef } from "react";
 import { Display, Viewer } from "three-cad-viewer";
 import "three-cad-viewer/dist/three-cad-viewer.css";
 import { useStore } from "../lib/store";
+import type { SelectKind } from "../lib/protocol";
 
 const TREE_W = 220;
+
+const KIND: Record<string, SelectKind> = { faces: "face", edges: "edge", vertices: "vertex" };
+
+// three-cad-viewer names objects with "|" as the path delimiter
+// (group.name = path.replaceAll("/", "|")). Shapes resolve as:
+//   "|Group|plate"            -> whole solid           -> /Group/plate
+//   "|Group|plate|faces_3"    -> face 3 of that solid  -> /Group/plate
+//   "|Group|plate|faces|3"    -> (alt form) face 3
+function parsePick(name: string): { shapeId: string; kind: SelectKind; index: number } | null {
+  const segs = name.split("|").filter(Boolean);
+  if (segs.length === 0) return null;
+
+  const last = segs[segs.length - 1];
+  const prev = segs.length >= 2 ? segs[segs.length - 2] : "";
+
+  // "faces_3"
+  const combined = /^(faces|edges|vertices)_(\d+)$/.exec(last);
+  if (combined) {
+    const shapeId = "/" + segs.slice(0, -1).join("/");
+    return { shapeId, kind: KIND[combined[1]], index: parseInt(combined[2], 10) };
+  }
+  // "faces" "3"
+  if (/^\d+$/.test(last) && KIND[prev]) {
+    const shapeId = "/" + segs.slice(0, -2).join("/");
+    return { shapeId, kind: KIND[prev], index: parseInt(last, 10) };
+  }
+  // whole solid
+  return { shapeId: "/" + segs.join("/"), kind: "solid", index: 0 };
+}
 
 // PBR-ish lighting tuned for technical modeling (plan §6: technical render mode).
 const renderOptions = {
@@ -67,10 +97,22 @@ export function Viewport() {
       if (Array.isArray(quat)) cam.quaternion = quat as number[];
       if (typeof zoom === "number") cam.zoom = zoom;
       if (Array.isArray(target)) cam.target = target as number[];
+
+      // Pick capture: when the select tool reports a selection change, read the
+      // just-picked object and resolve it to a build123d selector server-side.
+      if ("selected" in change || "selectedShapeIDs" in change) {
+        const v = viewerRef.current as unknown as { lastObject?: { obj?: { name?: string } } } | null;
+        const name = v?.lastObject?.obj?.name;
+        if (name) {
+          const p = parsePick(name);
+          if (p) useStore.getState().sendSelect(p.kind, p.shapeId, p.index);
+        }
+      }
     };
 
     const viewer = new Viewer(display, { up: "Z", control: "trackball", ortho: true }, nc);
     viewerRef.current = viewer;
+    (window as unknown as { __viewer: Viewer }).__viewer = viewer; // debug/E2E handle
 
     const ro = new ResizeObserver(() => {
       const s = sizeOf(container);
@@ -114,10 +156,33 @@ export function Viewport() {
       if (typeof cam.zoom === "number") viewerOptions.zoom = cam.zoom;
     }
 
+    const vv = viewer as unknown as {
+      setRaycastMode?: (f: boolean) => void;
+      toggleAnimationLoop?: (f: boolean) => void;
+      cadTools?: { enable?: (t: string) => void };
+    };
     try {
-      if (renderedOnce.current) viewer.clear();
+      if (renderedOnce.current) {
+        try {
+          vv.setRaycastMode?.(false); // dispose the raycaster bound to the old scene
+        } catch {
+          /* ignore */
+        }
+        viewer.clear();
+      }
       viewer.render(shapes, renderOptions, viewerOptions);
       renderedOnce.current = true;
+
+      // Enable click-to-select. The toolbar does exactly this trio: create the
+      // raycaster (bound to the new scene), enable the select tool, and run the
+      // animation loop so hover-raycast keeps `lastObject` current (plan §11 M2).
+      try {
+        vv.setRaycastMode?.(true);
+        vv.cadTools?.enable?.("SelectObjects");
+        vv.toggleAnimationLoop?.(true);
+      } catch {
+        /* select tool unavailable */
+      }
     } catch (e) {
       console.error("viewer.render failed", e);
     }

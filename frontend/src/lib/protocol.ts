@@ -38,6 +38,20 @@ export interface StatusPayload {
   detail: string;
 }
 
+export type SelectKind = "face" | "edge" | "vertex" | "solid";
+
+// Backend MEASUREMENT payload (app/kernel/select.py).
+export interface MeasurementPayload {
+  kind: SelectKind;
+  index: number;
+  selector?: string;
+  selector_confidence?: "high" | "medium" | "low" | "n/a";
+  description?: string;
+  properties?: Record<string, unknown>;
+  solid?: { bbox?: { min: number[]; max: number[]; size: number[] }; volume?: number };
+  error?: string;
+}
+
 export interface BBox {
   xmin: number;
   xmax: number;

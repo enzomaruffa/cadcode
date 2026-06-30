@@ -44,12 +44,18 @@ def main() -> None:
             break  # parent closed the pipe
         try:
             req = json.loads(frame)
-            source = req.get("source", "")
-            timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
+            op = req.get("op", "run")
         except Exception as exc:  # noqa: BLE001
-            write_frame(stdout, json.dumps(RunResult.failure(f"bad request: {exc}").as_dict()).encode())
+            write_frame(stdout, json.dumps({"ok": False, "error": f"bad request: {exc}"}).encode())
             continue
 
+        if op == "select":
+            write_frame(stdout, json.dumps(_handle_select(req)).encode())
+            continue
+
+        # op == "run"
+        source = req.get("source", "")
+        timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
         signal.setitimer(signal.ITIMER_REAL, timeout)
         try:
             result = run_source(source, sandbox=True)
@@ -59,6 +65,27 @@ def main() -> None:
             signal.setitimer(signal.ITIMER_REAL, 0)
 
         write_frame(stdout, json.dumps(result.as_dict()).encode())
+
+
+def _handle_select(req: dict) -> dict:
+    """Resolve a viewport pick against the last run's cached objects."""
+    from app.kernel import runner
+    from app.kernel.select import measure_selection
+
+    shape_id = req.get("shape_id", "")
+    kind = req.get("kind", "face")
+    index = int(req.get("index", 0))
+    obj = runner.LAST_SHOWN.get(shape_id)
+    if obj is None:
+        # Single-part fallback: if exactly one object is shown, use it.
+        if len(runner.LAST_SHOWN) == 1:
+            obj = next(iter(runner.LAST_SHOWN.values()))
+        else:
+            return {"error": f"no object for shape {shape_id!r} (re-run first)"}
+    try:
+        return measure_selection(obj, kind, index)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 if __name__ == "__main__":

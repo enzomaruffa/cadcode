@@ -4,12 +4,16 @@ import {
   EDIT,
   ERROR,
   GEOMETRY,
+  MEASUREMENT,
   RUN,
+  SELECT,
   STATUS,
   makeId,
   type Envelope,
   type ErrorPayload,
   type GeometryPayload,
+  type MeasurementPayload,
+  type SelectKind,
   type StatusPayload,
   type TessShapes,
 } from "./protocol";
@@ -33,10 +37,13 @@ interface StoreState {
   runState: RunState;
   error: ErrorInfo | null;
   stdout: string;
+  selection: MeasurementPayload | null;
 
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   runNow: () => void;
+  sendSelect: (kind: SelectKind, shapeId: string, index: number) => void;
+  clearSelection: () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -58,6 +65,7 @@ export const useStore = create<StoreState>((set, get) => ({
   runState: "idle",
   error: null,
   stdout: "",
+  selection: null,
 
   connect: () => {
     // Guard against React StrictMode's double-invoke opening two sockets.
@@ -111,6 +119,10 @@ export const useStore = create<StoreState>((set, get) => ({
           if (p.state === "ok" || p.state === "running") set({ error: null });
           break;
         }
+        case MEASUREMENT: {
+          set({ selection: env.payload as unknown as MeasurementPayload });
+          break;
+        }
         default:
           break;
       }
@@ -129,6 +141,12 @@ export const useStore = create<StoreState>((set, get) => ({
     if (debounceTimer) clearTimeout(debounceTimer);
     send(RUN, {});
   },
+
+  sendSelect: (kind, shapeId, index) => {
+    send(SELECT, { kind, shape_id: shapeId, index });
+  },
+
+  clearSelection: () => set({ selection: null }),
 }));
 
 // Expose for debugging / E2E.

@@ -95,10 +95,123 @@ body {
   min-height: 0;
 }
 
+.viewport-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .viewport {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+}
+
+.selpanel {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 280px;
+  background: rgba(13, 17, 23, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.selpanel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.selpanel-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.selpanel-kind {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.selpanel-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.selpanel-close:hover {
+  color: var(--text);
+}
+
+.selpanel-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.selpanel-selector code {
+  flex: 1 1 auto;
+  background: #0b0e13;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.selpanel-conf {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.conf-high {
+  background: rgba(63, 185, 80, 0.2);
+  color: var(--ok);
+}
+.conf-medium {
+  background: rgba(210, 153, 34, 0.2);
+  color: var(--warn);
+}
+.conf-low,
+.conf-n\/a {
+  background: rgba(125, 136, 147, 0.2);
+  color: var(--text-dim);
+}
+
+.selpanel-props {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+}
+.selpanel-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.selpanel-row dt {
+  color: var(--text-dim);
+}
+.selpanel-row dd {
+  margin: 0;
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--text);
+}
+.selpanel-error {
+  color: var(--err);
 }
 
 .statusbar {

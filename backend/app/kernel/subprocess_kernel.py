@@ -83,9 +83,25 @@ class SubprocessKernel:
 
     async def run(self, source: str) -> RunResult:
         async with self._lock:
-            return await asyncio.to_thread(self._run_blocking, source)
+            data = await asyncio.to_thread(
+                self._request, {"op": "run", "source": source, "timeout": self._script_timeout}, self._read_timeout
+            )
+        if isinstance(data, RunResult):
+            return data  # an error envelope produced by _request itself
+        return RunResult.from_dict(data)
 
-    def _run_blocking(self, source: str) -> RunResult:
+    async def measure_selection(self, kind: str, shape_id: str, index: int) -> dict:
+        async with self._lock:
+            data = await asyncio.to_thread(
+                self._request, {"op": "select", "kind": kind, "shape_id": shape_id, "index": index}, 8.0
+            )
+        if isinstance(data, RunResult):
+            return {"error": data.error}
+        return data
+
+    def _request(self, payload: dict, read_timeout: float) -> dict | RunResult:
+        """Send one framed request, return the parsed JSON dict — or a
+        RunResult.failure envelope if the worker hung/died."""
         with self._proc_lock:
             if not self._alive():
                 try:
@@ -96,20 +112,18 @@ class SubprocessKernel:
             proc = self._proc
             assert proc is not None and proc.stdin is not None and proc.stdout is not None
             try:
-                write_frame(proc.stdin, json.dumps({"source": source, "timeout": self._script_timeout}).encode())
+                write_frame(proc.stdin, json.dumps(payload).encode())
             except (BrokenPipeError, OSError):
                 self._kill()
-                return RunResult.failure("kernel worker died before the run; restarting — re-run to retry")
+                return RunResult.failure("kernel worker died; restarting — retry")
 
-            data = read_frame_timeout(proc.stdout.fileno(), self._read_timeout)
+            data = read_frame_timeout(proc.stdout.fileno(), read_timeout)
             if data is None:
                 # Hung in C (SIGALRM couldn't interrupt) or crashed/OOM'd.
                 self._kill()
-                return RunResult.failure(
-                    f"TimeoutError: kernel exceeded {self._read_timeout:.0f}s and was killed (restarted)"
-                )
+                return RunResult.failure(f"TimeoutError: kernel exceeded {read_timeout:.0f}s and was killed (restarted)")
             try:
-                return RunResult.from_dict(json.loads(data))
+                return json.loads(data)
             except Exception as exc:  # noqa: BLE001
                 self._kill()
                 return RunResult.failure(f"bad kernel response: {exc}")
