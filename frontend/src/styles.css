@@ -1377,6 +1377,63 @@ textarea {
   color: var(--text-dim);
 }
 
+/* ===== editor colors modal ===== */
+.modal-sm {
+  width: min(440px, 92vw);
+}
+.colors-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.color-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.color-row:hover {
+  background: var(--bg-pane);
+}
+.color-label {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.color-hex {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.color-input {
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-pane);
+  cursor: pointer;
+}
+.color-input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.color-input::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.colors-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-4);
+}
+
 /* ===== editor tabs ===== */
 .tabbar {
   display: flex;
