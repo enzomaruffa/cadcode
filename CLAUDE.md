@@ -17,8 +17,11 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8787   # 8000 is often taken
 cd frontend && npm install && npm run dev                   # http://localhost:5173
 
 # Checks
-cd frontend && npx tsc -b --noEmit        # frontend typecheck
+cd backend  && uv run ruff format . && uv run ruff check . && uv run ty check   # lint + format + types
+cd frontend && npx tsc -b --noEmit && npm run lint && npm run format             # types + eslint + prettier
 ```
+
+Lint/format/type-check are wired: backend uses **ruff** (lint+format) + **ty** (Astral's type checker) — config in `backend/pyproject.toml` (`[tool.ruff]`, `[tool.ty]`); frontend uses **ESLint** (flat config `eslint.config.js`) + **Prettier** (`.prettierrc.json`) — `npm run lint` / `npm run format`. All green; keep them green.
 
 The agent uses **Gemini 3.5 Flash** by default (`google:gemini-3.5-flash`); override with `CAD_AGENT_MODEL` (any pydantic-ai model id). It needs `GEMINI_API_KEY`/`GOOGLE_API_KEY` at runtime. The backend port is configurable on the frontend via `VITE_WS_URL` / `VITE_HTTP_URL`.
 

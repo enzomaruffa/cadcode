@@ -22,9 +22,12 @@ _TOL = 1e-3
 _AXES = ("X", "Y", "Z")
 # +axis -> human name for an extreme face along that axis
 _DIR_NAME = {
-    ("X", 1): "right", ("X", -1): "left",
-    ("Y", 1): "back", ("Y", -1): "front",
-    ("Z", 1): "top", ("Z", -1): "bottom",
+    ("X", 1): "right",
+    ("X", -1): "left",
+    ("Y", 1): "back",
+    ("Y", -1): "front",
+    ("Z", 1): "top",
+    ("Z", -1): "bottom",
 }
 
 
@@ -57,7 +60,11 @@ def _face_selector(faces: list, index: int) -> tuple[str, str, str]:
     coord = {"X": lambda p: p.X, "Y": lambda p: p.Y, "Z": lambda p: p.Z}[axis]
     here = coord(f.center())
     # Faces sharing this axis-aligned normal direction.
-    same = [coord(ff.center()) for ff in faces if _axis_aligned(*[getattr(ff.normal_at(), a) for a in ("X", "Y", "Z")]) == aa]
+    same = [
+        coord(ff.center())
+        for ff in faces
+        if _axis_aligned(*[getattr(ff.normal_at(), a) for a in ("X", "Y", "Z")]) == aa
+    ]
     name = _DIR_NAME[(axis, sign)]
     if same and here >= max(same) - _TOL:
         return f"faces().sort_by(Axis.{axis})[-1]", "high", f"{name} face (+{axis})"
@@ -97,7 +104,9 @@ def measure_selection(shape: Any, kind: str, index: int) -> dict[str, Any]:
                 "length": round(e.length, 4),
                 "center": _v3(e.center()),
             }
-            out.update(selector=f"edges()[{index}]", selector_confidence="low", description=f"{e.geom_type.name.lower()} edge")
+            out.update(
+                selector=f"edges()[{index}]", selector_confidence="low", description=f"{e.geom_type.name.lower()} edge"
+            )
 
         elif kind == "vertex":
             verts = [Vertex(v) for v in C.get_vertices(w)]
@@ -111,7 +120,7 @@ def measure_selection(shape: Any, kind: str, index: int) -> dict[str, Any]:
             from build123d import Shape
 
             out["kind"] = "solid"
-            s = Shape(w)
+            s: Any = Shape(w)
             props: dict[str, Any] = {}
             try:
                 props["volume"] = round(s.volume, 4)

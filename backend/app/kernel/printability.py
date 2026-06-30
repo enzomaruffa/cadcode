@@ -41,8 +41,8 @@ def _color(overhang: float) -> str:
     if overhang <= OVERHANG_LIMIT:
         # green -> yellow as we approach the limit
         t = overhang / OVERHANG_LIMIT
-        r = int(0x3f + (0xff - 0x3f) * t)
-        g = int(0xb9 + (0xd2 - 0xb9) * t)
+        r = int(0x3F + (0xFF - 0x3F) * t)
+        g = int(0xB9 + (0xD2 - 0xB9) * t)
         return f"#{r:02x}{g:02x}22"
     return "#f85149"  # needs support
 

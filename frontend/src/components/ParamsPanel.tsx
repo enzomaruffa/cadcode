@@ -36,35 +36,35 @@ export function ParamsPanel() {
         <span className={`palette-caret ${open ? "open" : ""}`}>▸</span> parameters ({params.length})
       </button>
       {open && (
-      <div className="params-grid">
-        {params.map((p) => {
-          const v = vals[p.name] ?? p.value;
-          const auto = rangeFor(p.value);
-          const min = p.min ?? auto.min;
-          const max = p.max ?? auto.max;
-          const step = p.step ?? auto.step;
-          return (
-            <div key={p.name} className="param-row">
-              <label className="param-name">{p.name}</label>
-              <input
-                className="param-slider"
-                type="range"
-                min={min}
-                max={max}
-                step={step}
-                value={v}
-                onChange={(e) => {
-                  const nv = parseFloat(e.target.value);
-                  editedAt.current = Date.now();
-                  setVals((s) => ({ ...s, [p.name]: nv }));
-                  setParam(p.line, p.name, nv);
-                }}
-              />
-              <span className="param-val">{p.is_int ? v : v.toFixed(2)}</span>
-            </div>
-          );
-        })}
-      </div>
+        <div className="params-grid">
+          {params.map((p) => {
+            const v = vals[p.name] ?? p.value;
+            const auto = rangeFor(p.value);
+            const min = p.min ?? auto.min;
+            const max = p.max ?? auto.max;
+            const step = p.step ?? auto.step;
+            return (
+              <div key={p.name} className="param-row">
+                <label className="param-name">{p.name}</label>
+                <input
+                  className="param-slider"
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={v}
+                  onChange={(e) => {
+                    const nv = parseFloat(e.target.value);
+                    editedAt.current = Date.now();
+                    setVals((s) => ({ ...s, [p.name]: nv }));
+                    setParam(p.line, p.name, nv);
+                  }}
+                />
+                <span className="param-val">{p.is_int ? v : v.toFixed(2)}</span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

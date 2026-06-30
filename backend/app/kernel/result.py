@@ -38,7 +38,7 @@ class RunResult:
         measurements: dict | None = None,
         specs: list | None = None,
         stdout: str = "",
-    ) -> "RunResult":
+    ) -> RunResult:
         return cls(
             ok=True,
             shapes=shapes,
@@ -51,7 +51,7 @@ class RunResult:
         )
 
     @classmethod
-    def failure(cls, error: str, traceback: str = "", line: int | None = None, stdout: str = "") -> "RunResult":
+    def failure(cls, error: str, traceback: str = "", line: int | None = None, stdout: str = "") -> RunResult:
         return cls(ok=False, error=error, traceback=traceback, error_line=line, stdout=stdout)
 
     def as_dict(self) -> dict[str, Any]:
@@ -70,7 +70,7 @@ class RunResult:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "RunResult":
+    def from_dict(cls, d: dict[str, Any]) -> RunResult:
         return cls(
             ok=d.get("ok", False),
             shapes=d.get("shapes"),

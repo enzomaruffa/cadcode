@@ -12,9 +12,7 @@ import re
 from typing import Any
 
 # Optional inline range annotation: `WIDTH = 28  # [10, 100]` or `# [10, 100, 2]`
-_RANGE_RE = re.compile(
-    r"#\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,\s*(-?\d+(?:\.\d+)?)\s*)?\]"
-)
+_RANGE_RE = re.compile(r"#\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,\s*(-?\d+(?:\.\d+)?)\s*)?\]")
 
 
 def _num(s: str) -> float | int:

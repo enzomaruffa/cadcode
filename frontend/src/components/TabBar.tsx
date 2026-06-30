@@ -30,7 +30,13 @@ export function TabBar() {
               }}
             />
           ) : (
-            <span className="tab-name" onDoubleClick={(e) => { e.stopPropagation(); setEditing(d.id); }}>
+            <span
+              className="tab-name"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setEditing(d.id);
+              }}
+            >
               {d.name}
             </span>
           )}

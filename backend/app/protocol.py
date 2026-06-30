@@ -58,7 +58,7 @@ class Envelope(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def make(cls, type: str, payload: dict[str, Any] | None = None, id: str | None = None) -> "Envelope":
+    def make(cls, type: str, payload: dict[str, Any] | None = None, id: str | None = None) -> Envelope:
         env = cls(type=type, payload=payload or {})
         if id is not None:
             env.id = id

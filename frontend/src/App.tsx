@@ -47,6 +47,17 @@ function CollapsedStrip({ title, onExpand }: { title: string; onExpand: () => vo
   );
 }
 
+function PaneTitle({ label, onCollapse }: { label: string; onCollapse: () => void }) {
+  return (
+    <div className="pane-title">
+      <span>{label}</span>
+      <button className="pane-collapse" onClick={onCollapse} title={`Collapse ${label}`}>
+        ‹
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const connect = useStore((s) => s.connect);
   const [collapsed, setCollapsed] = useState<Record<PaneKey, boolean>>({ agent: false, code: false, viewport: false });
@@ -65,18 +76,6 @@ export default function App() {
       if (next.agent && next.code && next.viewport) return c; // keep at least one open
       return next;
     });
-
-  const PaneTitle = ({ pane, label, extra }: { pane: PaneKey; label: string; extra?: React.ReactNode }) => (
-    <div className="pane-title">
-      <span>{label}</span>
-      <span className="pane-title-actions">
-        {extra}
-        <button className="pane-collapse" onClick={() => toggle(pane)} title={`Collapse ${label}`}>
-          ‹
-        </button>
-      </span>
-    </div>
-  );
 
   const showAgentResizer = !collapsed.agent && !collapsed.code;
   const showCodeResizer = !collapsed.code && !collapsed.viewport;
@@ -99,7 +98,7 @@ export default function App() {
           <CollapsedStrip title="agent" onExpand={() => toggle("agent")} />
         ) : (
           <section className="pane pane-agent" style={{ flex: `0 0 ${agentW}px` }}>
-            <PaneTitle pane="agent" label="agent" />
+            <PaneTitle label="agent" onCollapse={() => toggle("agent")} />
             <AgentPanel />
           </section>
         )}
@@ -110,7 +109,7 @@ export default function App() {
           <CollapsedStrip title="code" onExpand={() => toggle("code")} />
         ) : (
           <section className="pane pane-editor" style={{ flex: `0 0 ${codeW}px` }}>
-            <PaneTitle pane="code" label="code" />
+            <PaneTitle label="code" onCollapse={() => toggle("code")} />
             <TabBar />
             <EditorPane />
             <ParamsPanel />
@@ -123,7 +122,7 @@ export default function App() {
           <CollapsedStrip title="3d" onExpand={() => toggle("viewport")} />
         ) : (
           <section className="pane pane-viewport">
-            <PaneTitle pane="viewport" label="3d" />
+            <PaneTitle label="3d" onCollapse={() => toggle("viewport")} />
             <div className="viewport-wrap">
               <Viewport />
               <PrintabilityToggle />

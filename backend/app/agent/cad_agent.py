@@ -40,6 +40,7 @@ def _require_calls(source: str) -> list[str]:
                 pass
     return calls
 
+
 # Gemini 3.5 Flash by default (needs GEMINI_API_KEY / GOOGLE_API_KEY at run time).
 # Override with the CAD_AGENT_MODEL env var (any pydantic-ai model id).
 DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "google:gemini-3.5-flash")
@@ -78,11 +79,15 @@ class Patch(BaseModel):
 
     new_source: str = Field(description="the COMPLETE updated build123d script after your edit")
     rationale: str = Field(description="one or two sentences explaining the change")
-    targets: list[str] = Field(default_factory=list, description="selectors / areas touched, e.g. ['faces().sort_by(Axis.Z)[-1]']")
+    targets: list[str] = Field(
+        default_factory=list, description="selectors / areas touched, e.g. ['faces().sort_by(Axis.Z)[-1]']"
+    )
 
 
 def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
-    agent: Agent[CadDeps, Patch] = Agent(
+    # output_type=Patch makes this an Agent[CadDeps, Patch] at runtime, but the
+    # type checker can't tie the kwarg to the generic — annotate it explicitly.
+    agent = Agent[CadDeps, Patch](
         model or DEFAULT_MODEL,
         deps_type=CadDeps,
         output_type=Patch,
@@ -101,7 +106,12 @@ def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
         Use this to verify your edit before returning it."""
         result = await ctx.deps.kernel.run(source)
         if result.ok:
-            return {"ok": True, "bbox": result.bbox, "parts": list((result.states or {}).keys()), "stdout": result.stdout}
+            return {
+                "ok": True,
+                "bbox": result.bbox,
+                "parts": list((result.states or {}).keys()),
+                "stdout": result.stdout,
+            }
         return {"ok": False, "error": result.error, "line": result.error_line}
 
     @agent.tool
@@ -123,7 +133,9 @@ def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
         result = await ctx.deps.kernel.run(patch.new_source)
         if not result.ok:
             where = f" (line {result.error_line})" if result.error_line else ""
-            raise ModelRetry(f"Your edit fails to run: {result.error}{where}. Fix new_source and return a working script.")
+            raise ModelRetry(
+                f"Your edit fails to run: {result.error}{where}. Fix new_source and return a working script."
+            )
 
         # Spec integrity: the agent may ADD require()s but must not change or
         # delete the existing ones (no cheating by weakening the spec).

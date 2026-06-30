@@ -5,8 +5,8 @@ subprocess kernel implementing the same ``Kernel`` interface — re-exec the who
 script per edit, deterministic and stateless, matching code-as-truth.
 """
 
-from app.kernel.result import RunResult
 from app.kernel.inprocess import InProcessKernel, Kernel
+from app.kernel.result import RunResult
 from app.kernel.subprocess_kernel import SubprocessKernel
 
 __all__ = ["RunResult", "Kernel", "InProcessKernel", "SubprocessKernel"]

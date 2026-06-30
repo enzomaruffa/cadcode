@@ -88,7 +88,13 @@ export function FileMenu() {
       </button>
       {open && (
         <div className="menu-dropdown">
-          <button className="menu-item" onClick={() => { newDoc(); setOpen(false); }}>
+          <button
+            className="menu-item"
+            onClick={() => {
+              newDoc();
+              setOpen(false);
+            }}
+          >
             New part
           </button>
           <button className="menu-item" onClick={openFile}>

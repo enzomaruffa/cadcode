@@ -10,18 +10,18 @@ import os
 import select
 import struct
 import time
-from typing import BinaryIO
+from typing import IO
 
 _HDR = struct.Struct(">I")
 
 
-def write_frame(f: BinaryIO, data: bytes) -> None:
+def write_frame(f: IO[bytes], data: bytes) -> None:
     f.write(_HDR.pack(len(data)))
     f.write(data)
     f.flush()
 
 
-def _read_exact(f: BinaryIO, n: int) -> bytes | None:
+def _read_exact(f: IO[bytes], n: int) -> bytes | None:
     chunks: list[bytes] = []
     got = 0
     while got < n:
@@ -33,7 +33,7 @@ def _read_exact(f: BinaryIO, n: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def read_frame(f: BinaryIO) -> bytes | None:
+def read_frame(f: IO[bytes]) -> bytes | None:
     """Blocking read of one frame (worker side)."""
     hdr = _read_exact(f, 4)
     if hdr is None:

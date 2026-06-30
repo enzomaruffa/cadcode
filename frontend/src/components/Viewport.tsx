@@ -144,7 +144,9 @@ export function Viewport() {
       roTimer = setTimeout(() => {
         const s = sizeOf(container);
         try {
-          (viewer as unknown as { resizeCadView?: (a: number, b: number, c: number, d: boolean) => void }).resizeCadView?.(
+          (
+            viewer as unknown as { resizeCadView?: (a: number, b: number, c: number, d: boolean) => void }
+          ).resizeCadView?.(
             s.width,
             TREE_W,
             s.height,
@@ -196,7 +198,9 @@ export function Viewport() {
           o.color =
             activeLine != null && line === activeLine
               ? "#ffd23f"
-              : PROVENANCE_PALETTE[((line % PROVENANCE_PALETTE.length) + PROVENANCE_PALETTE.length) % PROVENANCE_PALETTE.length];
+              : PROVENANCE_PALETTE[
+                  ((line % PROVENANCE_PALETTE.length) + PROVENANCE_PALETTE.length) % PROVENANCE_PALETTE.length
+                ];
         }
       };
       recolor(shapes as unknown as { parts?: unknown[] });

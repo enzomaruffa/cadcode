@@ -10,16 +10,9 @@ export function StatusBar() {
   const specsPassed = specs.filter((s) => s.passed).length;
   const specsFailed = specs.filter((s) => !s.passed);
 
-  const connDot =
-    conn === "open" ? "ok" : conn === "connecting" ? "warn" : "err";
+  const connDot = conn === "open" ? "ok" : conn === "connecting" ? "warn" : "err";
   const runLabel =
-    runState === "running"
-      ? "running…"
-      : runState === "error"
-        ? "error"
-        : runState === "ok"
-          ? "ok"
-          : "idle";
+    runState === "running" ? "running…" : runState === "error" ? "error" : runState === "ok" ? "ok" : "idle";
 
   return (
     <div className="statusbar">
@@ -30,7 +23,9 @@ export function StatusBar() {
       {specs.length > 0 && (
         <span className={`status-specs ${specsFailed.length ? "specs-fail" : "specs-pass"}`}>
           {specsFailed.length ? "✗" : "✓"} specs {specsPassed}/{specs.length}
-          {specsFailed.length > 0 && <span className="specs-detail">: {specsFailed.map((s) => s.message).join("; ")}</span>}
+          {specsFailed.length > 0 && (
+            <span className="specs-detail">: {specsFailed.map((s) => s.message).join("; ")}</span>
+          )}
         </span>
       )}
       {error && (

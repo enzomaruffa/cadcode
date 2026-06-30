@@ -148,7 +148,14 @@ def provenance_render(source: str, active_line: int | None = None, sandbox: bool
     faces = info.get("faces") or []
     face_lines = info.get("face_lines") or []
     if not faces:
-        return {"ok": True, "shapes": {}, "states": {}, "bbox": None, "face_lines": [], "show_line": info.get("show_line")}
+        return {
+            "ok": True,
+            "shapes": {},
+            "states": {},
+            "bbox": None,
+            "face_lines": [],
+            "show_line": info.get("show_line"),
+        }
 
     # Color faces by the source line that produced them (a provenance map, so
     # the view is always informative), and make the cursor's line glow bright.

@@ -84,13 +84,17 @@ def check_imports(source: str) -> None:
             for alias in node.names:
                 top = _top(alias.name)
                 if top not in ALLOWED_MODULES:
-                    raise SandboxError(f"import of '{alias.name}' is not allowed in the sandbox", getattr(node, "lineno", None))
+                    raise SandboxError(
+                        f"import of '{alias.name}' is not allowed in the sandbox", getattr(node, "lineno", None)
+                    )
         elif isinstance(node, ast.ImportFrom):
             if node.level and node.level > 0:
                 raise SandboxError("relative imports are not allowed in the sandbox", getattr(node, "lineno", None))
             top = _top(node.module)
             if top not in ALLOWED_MODULES:
-                raise SandboxError(f"import from '{node.module}' is not allowed in the sandbox", getattr(node, "lineno", None))
+                raise SandboxError(
+                    f"import from '{node.module}' is not allowed in the sandbox", getattr(node, "lineno", None)
+                )
 
 
 def _guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:

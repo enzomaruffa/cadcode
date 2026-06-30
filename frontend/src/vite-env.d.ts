@@ -19,11 +19,7 @@ declare module "three-cad-viewer" {
       options: Record<string, unknown>,
       notifyCallback?: (change: Record<string, unknown>) => void,
     );
-    render(
-      shapes: unknown,
-      renderOptions: Record<string, unknown>,
-      viewerOptions: Record<string, unknown>,
-    ): void;
+    render(shapes: unknown, renderOptions: Record<string, unknown>, viewerOptions: Record<string, unknown>): void;
     clear(): void;
     update?: (updateMarker: boolean, notify?: boolean) => void;
     setState?: (id: string, state: number[]) => void;

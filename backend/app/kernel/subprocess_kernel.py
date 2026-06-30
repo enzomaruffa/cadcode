@@ -120,7 +120,9 @@ class SubprocessKernel:
     async def geomdiff(self, old_source: str, new_source: str) -> dict:
         async with self._lock:
             data = await asyncio.to_thread(
-                self._request, {"op": "geomdiff", "old_source": old_source, "new_source": new_source}, self._read_timeout
+                self._request,
+                {"op": "geomdiff", "old_source": old_source, "new_source": new_source},
+                self._read_timeout,
             )
         if isinstance(data, RunResult):
             return {"error": data.error}
@@ -148,7 +150,9 @@ class SubprocessKernel:
             if data is None:
                 # Hung in C (SIGALRM couldn't interrupt) or crashed/OOM'd.
                 self._kill()
-                return RunResult.failure(f"TimeoutError: kernel exceeded {read_timeout:.0f}s and was killed (restarted)")
+                return RunResult.failure(
+                    f"TimeoutError: kernel exceeded {read_timeout:.0f}s and was killed (restarted)"
+                )
             try:
                 return json.loads(data)
             except Exception as exc:  # noqa: BLE001

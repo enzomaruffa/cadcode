@@ -79,10 +79,7 @@ def _is_renderable(obj: Any) -> bool:
     from ocp_tessellate import convert as C
 
     return bool(
-        C.is_build123d_shape(obj)
-        or C.is_build123d_compound(obj)
-        or C.is_build123d(obj)
-        or C.is_topods_shape(obj)
+        C.is_build123d_shape(obj) or C.is_build123d_compound(obj) or C.is_build123d(obj) or C.is_topods_shape(obj)
     )
 
 
@@ -178,7 +175,7 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     # Cache objects by leaf id (states keys are leaf ids in tessellation order)
     # so a follow-up select can resolve a pick against the live topology.
     LAST_SHOWN.clear()
-    for leaf_id, obj in zip(states.keys(), objs):
+    for leaf_id, obj in zip(states.keys(), objs, strict=False):
         LAST_SHOWN[leaf_id] = obj
 
     return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs)

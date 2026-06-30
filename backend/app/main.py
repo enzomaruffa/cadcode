@@ -9,15 +9,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app import __version__, protocol as P
+from app import __version__
+from app import protocol as P
 from app.default_model import DEFAULT_SOURCE
 from app.kernel import SubprocessKernel
 from app.session import Session

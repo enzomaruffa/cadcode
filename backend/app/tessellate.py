@@ -13,6 +13,7 @@ means faces + edges visible).
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from ocp_tessellate import convert as C
@@ -59,10 +60,10 @@ def _build_states(shapes: dict) -> dict[str, list[int]]:
 
 
 def tessellate(
-    objs: list[Any],
-    names: list[str | None] | None = None,
-    colors: list[Any] | None = None,
-    alphas: list[float | None] | None = None,
+    objs: Sequence[Any],
+    names: Sequence[str | None] | None = None,
+    colors: Sequence[Any] | None = None,
+    alphas: Sequence[float | None] | None = None,
 ) -> tuple[dict, dict[str, list[int]], dict | None]:
     """Tessellate build123d/OCP objects into ``(shapes, states, bbox)``.
 
@@ -74,8 +75,13 @@ def tessellate(
     if not objs:
         return {"version": 3, "parts": [], "name": "Group", "id": "/Group", "loc": None, "bb": None}, {}, None
 
-    part_group, instances = C.to_ocpgroup(*objs, names=names, colors=colors, alphas=alphas)
-    instances, shapes, _mapping = C.tessellate_group(part_group, instances)
+    part_group, instances = C.to_ocpgroup(
+        *objs,
+        names=list(names) if names is not None else None,
+        colors=list(colors) if colors is not None else None,
+        alphas=list(alphas) if alphas is not None else None,
+    )
+    instances, shapes, _mapping = C.tessellate_group(part_group, instances)[:3]
     _decode_refs(instances, shapes)
 
     shapes_json = json.loads(C.numpy_to_json(shapes))

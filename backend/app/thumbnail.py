@@ -74,7 +74,5 @@ def iso_svg(part: Any, size: int = 120, stroke: str = "#9aa7ff") -> str:
         )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
-        f'stroke="{stroke}" stroke-width="1" fill="none" stroke-linecap="round">'
-        + "".join(lines)
-        + "</svg>"
+        f'stroke="{stroke}" stroke-width="1" fill="none" stroke-linecap="round">' + "".join(lines) + "</svg>"
     )

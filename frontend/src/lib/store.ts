@@ -377,7 +377,11 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   rejectPatch: () => {
-    set((s) => ({ pendingPatch: null, diffStats: null, chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }] }));
+    set((s) => ({
+      pendingPatch: null,
+      diffStats: null,
+      chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }],
+    }));
     send(REJECT_PATCH, {});
     send(RUN, {}); // restore the normal render (in case a diff was being previewed)
   },

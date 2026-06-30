@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app import protocol as P
 from app.document import Document
@@ -74,7 +75,9 @@ class Session:
         # error: report it, but keep the last good geometry on screen (plan §6)
         await self.send(
             P.ERROR,
-            P.ErrorPayload(message=result.error or "error", traceback=result.traceback, line=result.error_line).model_dump(),
+            P.ErrorPayload(
+                message=result.error or "error", traceback=result.traceback, line=result.error_line
+            ).model_dump(),
             reply_to,
         )
         if stale_on_error and self.doc.last_good is not None:
@@ -105,7 +108,9 @@ class Session:
     async def handle(self, env: P.Envelope) -> None:
         handler = getattr(self, f"_on_{env.type}", None)
         if handler is None:
-            await self.send(P.STATUS, P.StatusPayload(state="idle", detail=f"unknown message: {env.type}").model_dump(), env.id)
+            await self.send(
+                P.STATUS, P.StatusPayload(state="idle", detail=f"unknown message: {env.type}").model_dump(), env.id
+            )
             return
         await handler(env)
 
@@ -263,9 +268,13 @@ class Session:
         message = env.payload.get("message") or "checkpoint"
         try:
             entry = await asyncio.to_thread(self._gitstore().checkpoint, self.doc.source, message)
-            await self.send(P.STATUS, P.StatusPayload(state="ok", detail=f"checkpoint {entry['short']}").model_dump(), env.id)
+            await self.send(
+                P.STATUS, P.StatusPayload(state="ok", detail=f"checkpoint {entry['short']}").model_dump(), env.id
+            )
         except Exception as exc:  # noqa: BLE001
-            await self.send(P.STATUS, P.StatusPayload(state="error", detail=f"checkpoint failed: {exc}").model_dump(), env.id)
+            await self.send(
+                P.STATUS, P.StatusPayload(state="error", detail=f"checkpoint failed: {exc}").model_dump(), env.id
+            )
         await self.send_history()
 
     async def _on_rollback(self, env: P.Envelope) -> None:
@@ -275,7 +284,9 @@ class Session:
         try:
             source = await asyncio.to_thread(self._gitstore().source_at, str(sha))
         except Exception as exc:  # noqa: BLE001
-            await self.send(P.STATUS, P.StatusPayload(state="error", detail=f"rollback failed: {exc}").model_dump(), env.id)
+            await self.send(
+                P.STATUS, P.StatusPayload(state="error", detail=f"rollback failed: {exc}").model_dump(), env.id
+            )
             return
         self.doc.set_source(source)
         await self.send(P.SOURCE, {"source": self.doc.source})
