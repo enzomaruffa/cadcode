@@ -94,13 +94,22 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     viewerRef.current?.setSelectTopo(props.selectTopo ?? "face");
   }, [props.selectTopo]);
 
-  // Re-render when geometry or look changes.
+  // Re-render when geometry or look changes. Diagnostic view modes
+  // (printability/highlight/geomdiff) force the flat preset so AO and tone
+  // mapping never distort the exact backend colors.
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !props.shapes || !props.shapes.parts?.length) return;
-    viewer.render(props.shapes, presetFor(props.renderProfile));
+    const diagnostic = props.viewMode != null && props.viewMode !== "technical";
+    viewer.render(props.shapes, diagnostic ? TECHNICAL : presetFor(props.renderProfile));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.geometryRev, props.renderProfile, props.shapes]);
+  }, [props.geometryRev, props.renderProfile, props.viewMode, props.shapes]);
+
+  // Highlight mode: glow the active line's faces in place (no rebuild).
+  useEffect(() => {
+    if (props.viewMode === "highlight") viewerRef.current?.recolorHighlight(props.activeLine ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.activeLine, props.viewMode, props.geometryRev]);
 
   return <div ref={containerRef} className={props.className ?? "viewport"} />;
 });

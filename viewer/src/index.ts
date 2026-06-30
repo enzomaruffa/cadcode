@@ -3,6 +3,7 @@ export { CadViewer } from "./core/CadViewer";
 export { CadCanvas } from "./react/CadCanvas";
 export type { CadCanvasProps, CadCanvasHandle, RenderProfile, ViewMode } from "./react/CadCanvas";
 export { TECHNICAL, PRESENTATION, PREVIEW, DEFAULT_COLOR } from "./materials/materials";
+export { applyHighlight, applyFaceColors, PROVENANCE_PALETTE, HIGHLIGHT_GLOW } from "./materials/colorApi";
 export type {
   TessShapes,
   TessPart,

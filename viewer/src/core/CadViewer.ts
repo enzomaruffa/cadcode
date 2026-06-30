@@ -9,6 +9,7 @@ import { TECHNICAL } from "../materials/materials";
 import { LightRig } from "../materials/lighting";
 import { ShadowStage } from "../materials/shadows";
 import { Post } from "../materials/postprocessing";
+import { applyHighlight } from "../materials/colorApi";
 import { InteractionController, type SelectTopo } from "../interaction/InteractionController";
 
 const DPR_CAP = 2;
@@ -213,6 +214,14 @@ export class CadViewer {
 
   setSelectTopo(topo: SelectTopo): void {
     this.controller.setTopo(topo);
+  }
+
+  /** Cheap highlight-mode recolor (glow the active line's faces) — no rebuild. */
+  recolorHighlight(activeLine: number | null): void {
+    if (this.sceneGraph) {
+      applyHighlight(this.sceneGraph, activeLine);
+      this.requestRender();
+    }
   }
 
   dispose(): void {
