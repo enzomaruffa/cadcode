@@ -2,9 +2,40 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status: pre-implementation
+## Status: v0 implemented (M0–M7 + printability)
 
-This repo currently contains **only the architecture plan** (`cad-platform-v0-plan.md`) — no code, no git repo, no build tooling is scaffolded yet. There are intentionally **no build/lint/test commands documented here** because nothing exists to run. When scaffolding begins, add the real commands to this file. Until then, the plan *is* the spec; read it before designing anything.
+The full v0 from `cad-platform-v0-plan.md` is built and working. Issue tracking is in **beads** (`bd list`, `bd ready`); the milestone ladder is closed out.
+
+### Run it
+
+```bash
+# Backend (FastAPI + sandboxed build123d kernel) — needs Python 3.12 (OCP wheels)
+cd backend && uv sync --extra agent
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8787   # 8000 is often taken; frontend expects 8787
+
+# Frontend (Vite + React + Monaco + three-cad-viewer)
+cd frontend && npm install && npm run dev                   # http://localhost:5173
+
+# Checks
+cd frontend && npx tsc -b --noEmit        # frontend typecheck
+```
+
+The agent uses **Gemini 3.5 Flash** by default (`google:gemini-3.5-flash`); override with `CAD_AGENT_MODEL` (any pydantic-ai model id). It needs `GEMINI_API_KEY`/`GOOGLE_API_KEY` at runtime. The backend port is configurable on the frontend via `VITE_WS_URL` / `VITE_HTTP_URL`.
+
+### Where things live (backend `app/`)
+
+- `protocol.py` — the one WS envelope + message types (§8). `session.py` — per-socket dispatch (the `apply_edit → run → tessellate → render` spine). `main.py` — FastAPI app, WS, `/library` endpoint, shared warmed kernel lifespan.
+- `kernel/` — `runner.py` (exec build123d, `show()`/`require()` collectors, provenance-friendly), `sandbox.py` (AST allowlist + restricted builtins), `subprocess_kernel.py` + `worker_main.py` (isolated worker, SIGALRM timeout, op dispatch: run/select/printability/provenance/geomdiff), `select.py` (pick → measure + selector synthesis), `printability.py` (overhang heatmap), `provenance.py` (line↔face), `geomdiff.py` (boolean added/removed).
+- `tessellate.py` — build123d → three-cad-viewer shapes (ocp-tessellate; `numpy_to_json`; states embedded per-part). `gitstore.py` — checkpoints. `library.py` + `thumbnail.py` — parts catalog + iso SVGs. `params.py` — slider extraction. `agent/cad_agent.py` — PydanticAI agent (typed `CadDeps`, validated `Patch`, self-correct + spec-integrity validator).
+- `lib/` — shared `design.py` tokens + `parts/` catalog (on `PYTHONPATH`, allowlisted in the sandbox).
+
+### Gotchas learned the hard way
+
+- **three-cad-viewer per-part only:** per-face color/highlight is done by tessellating faces as *individual parts* (see printability/highlight modes). Single-mesh per-face highlight isn't feasible — that constraint shaped M2/M6.
+- **Selection needs the full tool setup:** `viewer.setRaycastMode(true)` + `cadTools.enable("SelectObjects")` + `toggleAnimationLoop(true)` — `cadTools.enable` alone leaves the raycaster null.
+- **No React StrictMode** — three-cad-viewer/Monaco are imperative singletons; the double-mount corrupts them. Call `viewer.clear()` before re-render.
+- **Object names use `|` as the path delimiter** (`group.name = path.replaceAll("/", "|")`); default viewport picks resolve to the whole solid, faces to per-face parts.
+- `window.__store` / `window.__viewer` / `window.monaco` are exposed for debugging/E2E.
 
 ## What this project is
 
