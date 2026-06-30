@@ -1,12 +1,17 @@
 # syntax=docker/dockerfile:1
 
-# --- stage 1: build the frontend ---
+# --- stage 1: build the frontend (+ the @cadcode/viewer renderer package) ---
 FROM node:22-slim AS frontend
-WORKDIR /fe
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build          # -> /fe/dist
+WORKDIR /build
+# The renderer is a sibling package consumed via a Vite alias (../viewer/src);
+# install its deps and place it next to frontend/ so the alias resolves.
+COPY viewer/package.json viewer/package-lock.json ./viewer/
+RUN cd viewer && npm ci
+COPY viewer/ ./viewer/
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN cd frontend && npm ci
+COPY frontend/ ./frontend/
+RUN cd frontend && npm run build          # -> /build/frontend/dist
 
 # --- stage 2: backend + served SPA ---
 FROM python:3.12-slim AS app
@@ -32,7 +37,7 @@ COPY backend/ ./
 RUN uv sync --extra agent --no-dev
 
 # Built SPA, served same-origin by FastAPI
-COPY --from=frontend /fe/dist ./static
+COPY --from=frontend /build/frontend/dist ./static
 
 ENV CAD_STATIC_DIR=/app/backend/static \
     CAD_WORKSPACE=/data/workspace \
