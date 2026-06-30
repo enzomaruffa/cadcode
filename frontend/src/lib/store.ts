@@ -105,6 +105,7 @@ interface StoreState {
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   newDoc: () => void;
+  openDoc: (name: string, source: string) => void;
   switchDoc: (id: string) => void;
   closeDoc: (id: string) => void;
   renameDoc: (id: string, name: string) => void;
@@ -284,6 +285,12 @@ export const useStore = create<StoreState>((set, get) => ({
   newDoc: () => {
     const id = makeId();
     set((s) => ({ docs: [...s.docs, { id, name: `part ${s.docs.length + 1}`, source: NEW_PART_SKELETON }] }));
+    get().switchDoc(id);
+  },
+
+  openDoc: (name, source) => {
+    const id = makeId();
+    set((s) => ({ docs: [...s.docs, { id, name: name || `part ${s.docs.length + 1}`, source }] }));
     get().switchDoc(id);
   },
 

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -61,6 +61,69 @@ async def health() -> dict[str, str]:
 async def default_source() -> dict[str, str]:
     """The starter buffer the editor loads with."""
     return {"source": DEFAULT_SOURCE}
+
+
+@app.post("/export")
+async def export(payload: dict) -> Response:
+    """Run the given source and export the shown geometry to a CAD/print format
+    (step | stl | glb | 3mf | brep). Returns the file as a download."""
+    import asyncio
+    import tempfile
+    from pathlib import Path as _P
+
+    source = payload.get("source", "")
+    fmt = str(payload.get("format", "step")).lower()
+    name = payload.get("name") or "model"
+
+    specs = {
+        "step": ("step", "application/step"),
+        "stl": ("stl", "model/stl"),
+        "glb": ("glb", "model/gltf-binary"),
+        "3mf": ("3mf", "model/3mf"),
+        "brep": ("brep", "application/octet-stream"),
+    }
+    if fmt not in specs:
+        return Response(content=f"unsupported format {fmt!r}", status_code=400)
+    ext, media = specs[fmt]
+
+    def _go() -> tuple[bytes | None, str]:
+        from build123d import Compound, Mesher, export_brep, export_gltf, export_step, export_stl
+
+        from app.kernel.runner import run_objects
+
+        objs, err = run_objects(source, sandbox=True)
+        if err:
+            return None, err
+        if not objs:
+            return None, "nothing to export (script shows no geometry)"
+        obj = objs[0] if len(objs) == 1 else Compound(children=objs)
+        with tempfile.TemporaryDirectory() as d:
+            path = _P(d) / f"{name}.{ext}"
+            try:
+                if fmt == "step":
+                    export_step(obj, path)
+                elif fmt == "stl":
+                    export_stl(obj, str(path))
+                elif fmt == "glb":
+                    export_gltf(obj, str(path), binary=True)
+                elif fmt == "brep":
+                    export_brep(obj, str(path))
+                elif fmt == "3mf":
+                    m = Mesher()
+                    m.add_shape(obj)
+                    m.write(str(path))
+                return path.read_bytes(), ""
+            except Exception as exc:  # noqa: BLE001
+                return None, f"{type(exc).__name__}: {exc}"
+
+    data, err = await asyncio.to_thread(_go)
+    if data is None:
+        return Response(content=f"export failed: {err}", status_code=400)
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"'},
+    )
 
 
 @app.get("/library/{name}/geometry")

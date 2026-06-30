@@ -8,6 +8,7 @@ import { PrintabilityToggle } from "./components/PrintabilityToggle";
 import { AgentPanel } from "./components/AgentPanel";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { LibraryModal } from "./components/LibraryModal";
+import { FileMenu } from "./components/FileMenu";
 import { HistoryControls } from "./components/HistoryControls";
 import { useStore } from "./lib/store";
 
@@ -83,6 +84,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
+        <FileMenu />
         <span className="brand">cadcode</span>
         <span className="tagline">the canvas is code</span>
         <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">

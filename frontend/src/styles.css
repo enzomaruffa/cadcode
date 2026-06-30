@@ -1209,3 +1209,64 @@ body {
 .tab-new:hover {
   color: var(--accent);
 }
+
+/* ===== file menu (top-left) ===== */
+.filemenu {
+  position: relative;
+}
+.filemenu-btn {
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.filemenu-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.menu-dropdown {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  min-width: 180px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  z-index: 50;
+  padding: 4px;
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.menu-item:hover:not(:disabled) {
+  background: var(--bg-pane);
+}
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.menu-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 4px 10px 2px;
+}
