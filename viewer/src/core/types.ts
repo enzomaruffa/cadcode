@@ -108,6 +108,8 @@ export interface PickMeta {
   kind: SelectKind;
   trianglesPerFace?: number[];
   segmentsPerEdge?: number[];
+  faceRanges?: Uint32Array; // prefix-sum of trianglesPerFace (triangle -> face)
+  edgeRanges?: Uint32Array; // prefix-sum of segmentsPerEdge (segment -> edge)
   faceCenters?: Float32Array;
   faceOrdinal?: number; // position in the flat leaf list (highlight-mode line map)
   name: string; // |-delimited

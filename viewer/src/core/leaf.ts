@@ -56,11 +56,14 @@ export function buildLeaf(part: TessPart, opts: LeafBuildOpts): LeafObject {
   const shape = part.shape;
 
   const faceRanges = buildFaceRanges(shape?.triangles_per_face);
+  const edgeRanges = buildFaceRanges(shape?.segments_per_edge);
   const pickMeta: PickMeta = {
     shapeId: part.id,
     kind: part.type === "edges" ? "edge" : part.type === "vertices" ? "vertex" : "face",
     trianglesPerFace: shape?.triangles_per_face,
     segmentsPerEdge: shape?.segments_per_edge,
+    faceRanges,
+    edgeRanges,
     faceCenters: shape && faceRanges ? buildFaceCenters(shape, faceRanges) : undefined,
     faceOrdinal,
     name: pathName(part.id),

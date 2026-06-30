@@ -89,6 +89,11 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     viewerRef.current?.setPicking(props.interactive !== false);
   }, [props.interactive]);
 
+  // Selection topology (face / edge / vertex / any).
+  useEffect(() => {
+    viewerRef.current?.setSelectTopo(props.selectTopo ?? "face");
+  }, [props.selectTopo]);
+
   // Re-render when geometry or look changes.
   useEffect(() => {
     const viewer = viewerRef.current;

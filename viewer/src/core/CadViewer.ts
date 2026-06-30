@@ -6,6 +6,7 @@ import { CameraRig } from "./CameraRig";
 import { Controls } from "./Controls";
 import { deepDispose } from "./dispose";
 import { TECHNICAL } from "../materials/materials";
+import { InteractionController, type SelectTopo } from "../interaction/InteractionController";
 
 const DPR_CAP = 2;
 
@@ -18,6 +19,7 @@ export class CadViewer {
   readonly scene: THREE.Scene;
   readonly rig: CameraRig;
   readonly controls: Controls;
+  readonly controller: InteractionController;
 
   private notify?: NotifyCallback;
   private sceneGraph: SceneGraph | null = null;
@@ -61,6 +63,12 @@ export class CadViewer {
     this.key = new THREE.DirectionalLight(0xffffff, this.preset.directIntensity);
     this.scene.add(this.ambient, this.key);
 
+    this.controller = new InteractionController(
+      this.renderer.domElement,
+      () => this.rig.camera,
+      (p) => this.notify?.({ pick: { new: p } }),
+    );
+
     const r = container.getBoundingClientRect();
     this.resize(Math.max(r.width, 1), Math.max(r.height, 1));
   }
@@ -76,6 +84,7 @@ export class CadViewer {
     this.sceneGraph = sg;
     this.scene.add(sg.root);
     this.applyLights();
+    this.controller.setTargets(sg.leaves);
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
     // free. Only fit on the very first render, or restore when the host hands us
@@ -180,16 +189,19 @@ export class CadViewer {
     this.requestRender();
   }
 
-  // Picking is wired in B2 (the InteractionController/Picker). Kept as a no-op
-  // hook so the React wrapper and call sites are stable.
-  setPicking(_enabled: boolean): void {
-    void _enabled;
+  setPicking(enabled: boolean): void {
+    this.controller.setEnabled(enabled);
+  }
+
+  setSelectTopo(topo: SelectTopo): void {
+    this.controller.setTopo(topo);
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     if (this.rafId != null) cancelAnimationFrame(this.rafId);
+    this.controller.dispose();
     this.controls.dispose();
     this.clearGraph();
     this.scene.remove(this.ambient, this.key);
