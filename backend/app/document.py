@@ -56,5 +56,13 @@ class Document:
     def history_len(self) -> int:
         return len(self._history)
 
+    @property
+    def can_undo(self) -> bool:
+        return len(self._history) > 1
+
+    @property
+    def can_redo(self) -> bool:
+        return len(self._redo) > 0
+
     def snapshot(self) -> dict[str, Any]:
         return {"source": self.source, "history_len": self.history_len}

@@ -56,6 +56,77 @@ body {
   font-size: 12px;
 }
 
+/* --- history controls --- */
+.history {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  position: relative;
+}
+.hbtn {
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.hbtn:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+.hbtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.timeline {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  z-index: 30;
+  padding: 4px;
+}
+.timeline-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 10px;
+  text-align: center;
+}
+.timeline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.timeline-row:hover {
+  background: var(--bg-pane);
+}
+.timeline-row code {
+  color: var(--accent);
+  font-size: 11px;
+}
+.timeline-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panes {
   display: flex;
   flex: 1 1 auto;

@@ -8,6 +8,7 @@ and the viewport can never fork reality.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 from typing import Any, Awaitable, Callable
@@ -42,6 +43,7 @@ class Session:
         self._agent_model = agent_model  # override for tests (e.g. TestModel)
         self._pending_source: str | None = None
         self.selection: dict | None = None  # last viewport pick, fed to the agent
+        self._git: Any | None = None  # lazy GitStore for durable checkpoints
 
     # --- outbound helpers ---------------------------------------------------
 
@@ -197,3 +199,58 @@ class Session:
     async def _on_reject_patch(self, env: P.Envelope) -> None:
         self._pending_source = None
         await self.send(P.STATUS, P.StatusPayload(state="ok", detail="patch rejected").model_dump(), env.id)
+
+    # --- git + history -------------------------------------------------------
+
+    def _gitstore(self) -> Any:
+        if self._git is None:
+            from app.gitstore import GitStore
+
+            self._git = GitStore()
+        return self._git
+
+    async def send_history(self) -> None:
+        try:
+            commits = await asyncio.to_thread(self._gitstore().log)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("git log failed: %s", exc)
+            commits = []
+        await self.send(
+            P.HISTORY,
+            {"commits": commits, "can_undo": self.doc.can_undo, "can_redo": self.doc.can_redo},
+        )
+
+    async def _on_checkpoint(self, env: P.Envelope) -> None:
+        message = env.payload.get("message") or "checkpoint"
+        try:
+            entry = await asyncio.to_thread(self._gitstore().checkpoint, self.doc.source, message)
+            await self.send(P.STATUS, P.StatusPayload(state="ok", detail=f"checkpoint {entry['short']}").model_dump(), env.id)
+        except Exception as exc:  # noqa: BLE001
+            await self.send(P.STATUS, P.StatusPayload(state="error", detail=f"checkpoint failed: {exc}").model_dump(), env.id)
+        await self.send_history()
+
+    async def _on_rollback(self, env: P.Envelope) -> None:
+        sha = env.payload.get("to")
+        if not sha:
+            return
+        try:
+            source = await asyncio.to_thread(self._gitstore().source_at, str(sha))
+        except Exception as exc:  # noqa: BLE001
+            await self.send(P.STATUS, P.StatusPayload(state="error", detail=f"rollback failed: {exc}").model_dump(), env.id)
+            return
+        self.doc.set_source(source)
+        await self.send(P.SOURCE, {"source": self.doc.source})
+        await self.run_current(env.id)
+        await self.send_history()
+
+    async def _on_undo(self, env: P.Envelope) -> None:
+        if self.doc.undo():
+            await self.send(P.SOURCE, {"source": self.doc.source})
+            await self.run_current(env.id)
+        await self.send_history()
+
+    async def _on_redo(self, env: P.Envelope) -> None:
+        if self.doc.redo():
+            await self.send(P.SOURCE, {"source": self.doc.source})
+            await self.run_current(env.id)
+        await self.send_history()

@@ -87,6 +87,7 @@ async def ws(websocket: WebSocket) -> None:
 
     # Push the initial geometry so the viewport isn't empty on connect.
     await session.run_current()
+    await session.send_history()
 
     try:
         while True:

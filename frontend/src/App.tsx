@@ -7,6 +7,7 @@ import { PrintabilityToggle } from "./components/PrintabilityToggle";
 import { AgentPanel } from "./components/AgentPanel";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { PartsPalette } from "./components/PartsPalette";
+import { HistoryControls } from "./components/HistoryControls";
 import { useStore } from "./lib/store";
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
       <header className="topbar">
         <span className="brand">cadcode</span>
         <span className="tagline">the canvas is code</span>
+        <HistoryControls />
       </header>
       <div className="panes">
         <section className="pane pane-editor">

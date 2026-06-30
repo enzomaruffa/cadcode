@@ -33,6 +33,8 @@ REJECT_PATCH = "reject_patch"
 CHECKPOINT = "checkpoint"
 ROLLBACK = "rollback"
 SET_MODE = "set_mode"
+UNDO = "undo"
+REDO = "redo"
 
 # backend -> frontend
 GEOMETRY = "geometry"
@@ -41,6 +43,8 @@ AGENT_MESSAGE = "agent_message"
 AGENT_PATCH = "agent_patch"
 MEASUREMENT = "measurement"
 STATUS = "status"
+HISTORY = "history"
+SOURCE = "source"  # backend pushes a new buffer (rollback / undo / redo)
 
 
 class Envelope(BaseModel):

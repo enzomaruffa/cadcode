@@ -18,6 +18,9 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+# Per-session model checkpoint repo (its own nested git repo)
+backend/.workspace/
+
 # Verification / scratch artifacts
 *.png
 .playwright-mcp/

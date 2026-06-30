@@ -5,21 +5,29 @@ import {
   AGENT_MESSAGE,
   AGENT_PATCH,
   CHAT,
+  CHECKPOINT,
   EDIT,
   ERROR,
   GEOMETRY,
+  HISTORY,
   MEASUREMENT,
+  REDO,
   REJECT_PATCH,
+  ROLLBACK,
   RUN,
   SELECT,
   SET_MODE,
+  SOURCE,
   STATUS,
+  UNDO,
   makeId,
   type AgentMessagePayload,
   type AgentPatchPayload,
+  type Commit,
   type Envelope,
   type ErrorPayload,
   type GeometryPayload,
+  type HistoryPayload,
   type MeasurementPayload,
   type Param,
   type SelectKind,
@@ -65,6 +73,10 @@ interface StoreState {
   pendingPatch: AgentPatchPayload | null;
   agentBusy: boolean;
 
+  commits: Commit[];
+  canUndo: boolean;
+  canRedo: boolean;
+
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   runNow: () => void;
@@ -76,6 +88,10 @@ interface StoreState {
   sendChat: (text: string) => void;
   acceptPatch: () => void;
   rejectPatch: () => void;
+  checkpoint: (message?: string) => void;
+  rollback: (sha: string) => void;
+  undo: () => void;
+  redo: () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -106,6 +122,9 @@ export const useStore = create<StoreState>((set, get) => ({
   chat: [],
   pendingPatch: null,
   agentBusy: false,
+  commits: [],
+  canUndo: false,
+  canRedo: false,
 
   connect: () => {
     // Guard against React StrictMode's double-invoke opening two sockets.
@@ -179,6 +198,16 @@ export const useStore = create<StoreState>((set, get) => ({
         }
         case AGENT_PATCH: {
           set({ pendingPatch: env.payload as unknown as AgentPatchPayload, agentBusy: false });
+          break;
+        }
+        case HISTORY: {
+          const p = env.payload as unknown as HistoryPayload;
+          set({ commits: p.commits ?? [], canUndo: !!p.can_undo, canRedo: !!p.can_redo });
+          break;
+        }
+        case SOURCE: {
+          // Authoritative buffer push from the backend (rollback/undo/redo).
+          set({ source: (env.payload as { source: string }).source });
           break;
         }
         default:
@@ -255,6 +284,11 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({ pendingPatch: null, chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }] }));
     send(REJECT_PATCH, {});
   },
+
+  checkpoint: (message) => send(CHECKPOINT, { message: message || "checkpoint" }),
+  rollback: (sha) => send(ROLLBACK, { to: sha }),
+  undo: () => send(UNDO, {}),
+  redo: () => send(REDO, {}),
 }));
 
 // Expose for debugging / E2E.
