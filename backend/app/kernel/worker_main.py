@@ -53,6 +53,10 @@ def main() -> None:
             write_frame(stdout, json.dumps(_handle_select(req)).encode())
             continue
 
+        if op == "printability":
+            write_frame(stdout, json.dumps(_handle_printability(req)).encode())
+            continue
+
         # op == "run"
         source = req.get("source", "")
         timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
@@ -84,6 +88,21 @@ def _handle_select(req: dict) -> dict:
             return {"error": f"no object for shape {shape_id!r} (re-run first)"}
     try:
         return measure_selection(obj, kind, index)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _handle_printability(req: dict) -> dict:
+    """Re-color the last run's faces by overhang angle."""
+    from app.kernel import runner
+    from app.kernel.printability import printability_shapes
+
+    objs = list(runner.LAST_SHOWN.values())
+    if not objs:
+        return {"error": "no geometry yet (run first)"}
+    try:
+        shapes, states, bbox, stats = printability_shapes(objs, build_axis=req.get("build_axis", "Z"))
+        return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
 

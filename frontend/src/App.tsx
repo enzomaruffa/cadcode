@@ -3,6 +3,7 @@ import { EditorPane } from "./components/EditorPane";
 import { Viewport } from "./components/Viewport";
 import { StatusBar } from "./components/StatusBar";
 import { SelectionPanel } from "./components/SelectionPanel";
+import { PrintabilityToggle } from "./components/PrintabilityToggle";
 import { AgentPanel } from "./components/AgentPanel";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { PartsPalette } from "./components/PartsPalette";
@@ -31,6 +32,7 @@ export default function App() {
           <div className="pane-title">geometry</div>
           <div className="viewport-wrap">
             <Viewport />
+            <PrintabilityToggle />
             <SelectionPanel />
           </div>
         </section>

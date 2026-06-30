@@ -32,6 +32,7 @@ ACCEPT_PATCH = "accept_patch"
 REJECT_PATCH = "reject_patch"
 CHECKPOINT = "checkpoint"
 ROLLBACK = "rollback"
+SET_MODE = "set_mode"
 
 # backend -> frontend
 GEOMETRY = "geometry"
@@ -106,6 +107,9 @@ class GeometryPayload(BaseModel):
     stdout: str = ""
     # whether this geometry is the last *good* render kept after an error
     stale: bool = False
+    # "technical" (normal) or "printability" (overhang heatmap)
+    mode: str = "technical"
+    print_stats: dict[str, Any] | None = None
 
 
 class ErrorPayload(BaseModel):

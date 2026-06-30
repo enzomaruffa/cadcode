@@ -12,6 +12,7 @@ import {
   REJECT_PATCH,
   RUN,
   SELECT,
+  SET_MODE,
   STATUS,
   makeId,
   type AgentMessagePayload,
@@ -25,6 +26,7 @@ import {
   type Spec,
   type StatusPayload,
   type TessShapes,
+  type ViewMode,
 } from "./protocol";
 
 export interface ChatMessage {
@@ -55,6 +57,9 @@ interface StoreState {
   selection: MeasurementPayload | null;
   specs: Spec[];
   params: Param[];
+  viewMode: ViewMode;
+  buildAxis: "Z" | "X" | "Y";
+  printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
 
   chat: ChatMessage[];
   pendingPatch: AgentPatchPayload | null;
@@ -66,6 +71,8 @@ interface StoreState {
   sendSelect: (kind: SelectKind, shapeId: string, index: number) => void;
   clearSelection: () => void;
   setParam: (line: number, name: string, value: number) => void;
+  setViewMode: (mode: ViewMode) => void;
+  setBuildAxis: (axis: "Z" | "X" | "Y") => void;
   sendChat: (text: string) => void;
   acceptPatch: () => void;
   rejectPatch: () => void;
@@ -93,6 +100,9 @@ export const useStore = create<StoreState>((set, get) => ({
   selection: null,
   specs: [],
   params: [],
+  viewMode: "technical",
+  buildAxis: "Z",
+  printStats: null,
   chat: [],
   pendingPatch: null,
   agentBusy: false,
@@ -130,14 +140,21 @@ export const useStore = create<StoreState>((set, get) => ({
       switch (env.type) {
         case GEOMETRY: {
           const p = env.payload as unknown as GeometryPayload;
+          const incomingMode = p.mode ?? "technical";
           set((s) => ({
             shapes: p.shapes,
             geometryRev: s.geometryRev + 1,
             stale: !!p.stale,
             stdout: p.stdout ?? s.stdout,
-            specs: p.specs ?? [],
-            params: p.params ?? [],
+            specs: incomingMode === "technical" ? (p.specs ?? []) : s.specs,
+            params: incomingMode === "technical" ? (p.params ?? []) : s.params,
+            printStats: incomingMode === "printability" ? (p.print_stats ?? null) : s.printStats,
           }));
+          // Keep the heatmap live: if we're in printability mode but just got a
+          // fresh technical render (e.g. after an edit), re-request the overlay.
+          if (get().viewMode === "printability" && incomingMode === "technical") {
+            send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
+          }
           break;
         }
         case ERROR: {
@@ -188,6 +205,20 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   clearSelection: () => set({ selection: null }),
+
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
+    if (mode === "printability") send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
+    else {
+      set({ printStats: null });
+      send(SET_MODE, { mode: "technical" });
+    }
+  },
+
+  setBuildAxis: (axis) => {
+    set({ buildAxis: axis });
+    if (get().viewMode === "printability") send(SET_MODE, { mode: "printability", build_axis: axis });
+  },
 
   setParam: (line, name, value) => {
     const lines = get().source.split("\n");

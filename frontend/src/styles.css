@@ -196,6 +196,77 @@ body {
   overflow: hidden;
 }
 
+.viewmode {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.viewmode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(13, 17, 23, 0.9);
+}
+.viewmode-toggle button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.viewmode-toggle button.on {
+  background: var(--accent);
+  color: #0b0e13;
+  font-weight: 600;
+}
+.viewmode-legend {
+  background: rgba(13, 17, 23, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.legend-stats {
+  margin-top: 5px;
+  color: var(--text-dim);
+}
+.legend-build {
+  margin-bottom: 6px;
+  color: var(--text-dim);
+}
+.legend-build button {
+  background: #1c232d;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 1px 5px;
+  margin-left: 3px;
+  cursor: pointer;
+}
+.legend-build button.on {
+  background: var(--accent);
+  color: #0b0e13;
+}
+
 .selpanel {
   position: absolute;
   right: 12px;

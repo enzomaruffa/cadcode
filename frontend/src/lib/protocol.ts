@@ -13,6 +13,7 @@ export const SELECT = "select";
 export const CHAT = "chat";
 export const ACCEPT_PATCH = "accept_patch";
 export const REJECT_PATCH = "reject_patch";
+export const SET_MODE = "set_mode";
 
 // backend -> frontend
 export const GEOMETRY = "geometry";
@@ -56,7 +57,11 @@ export interface GeometryPayload {
   params: Param[];
   stdout: string;
   stale: boolean;
+  mode?: "technical" | "printability";
+  print_stats?: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
 }
+
+export type ViewMode = "technical" | "printability";
 
 export interface ErrorPayload {
   message: string;

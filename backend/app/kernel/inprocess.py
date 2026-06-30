@@ -18,6 +18,7 @@ from app.kernel.runner import run_source
 class Kernel(Protocol):
     async def run(self, source: str) -> RunResult: ...
     async def measure_selection(self, kind: str, shape_id: str, index: int) -> dict: ...
+    async def printability(self, build_axis: str = "Z") -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -35,6 +36,20 @@ class InProcessKernel:
         if obj is None:
             return {"error": f"no object for shape {shape_id!r} (re-run first)"}
         return await asyncio.to_thread(measure_selection, obj, kind, index)
+
+    async def printability(self, build_axis: str = "Z") -> dict:
+        from app.kernel import runner
+        from app.kernel.printability import printability_shapes
+
+        objs = list(runner.LAST_SHOWN.values())
+        if not objs:
+            return {"error": "no geometry yet (run first)"}
+
+        def _go() -> dict:
+            shapes, states, bbox, stats = printability_shapes(objs, build_axis=build_axis)
+            return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
+
+        return await asyncio.to_thread(_go)
 
     async def close(self) -> None:  # symmetry with the subprocess kernel
         return None
