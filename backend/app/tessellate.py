@@ -62,17 +62,19 @@ def tessellate(
     objs: list[Any],
     names: list[str | None] | None = None,
     colors: list[Any] | None = None,
+    alphas: list[float | None] | None = None,
 ) -> tuple[dict, dict[str, list[int]], dict | None]:
     """Tessellate build123d/OCP objects into ``(shapes, states, bbox)``.
 
     ``shapes`` and ``states`` are exactly what three-cad-viewer's
-    ``viewer.render(shapes, states)`` consumes.
+    ``viewer.render(shapes, states)`` consumes. ``alphas`` (0..1 per object)
+    drive transparency for geometry-diff ghosting.
     """
 
     if not objs:
         return {"version": 3, "parts": [], "name": "Group", "id": "/Group", "loc": None, "bb": None}, {}, None
 
-    part_group, instances = C.to_ocpgroup(*objs, names=names, colors=colors)
+    part_group, instances = C.to_ocpgroup(*objs, names=names, colors=colors, alphas=alphas)
     instances, shapes, _mapping = C.tessellate_group(part_group, instances)
     _decode_refs(instances, shapes)
 

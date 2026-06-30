@@ -61,6 +61,10 @@ def main() -> None:
             write_frame(stdout, json.dumps(_handle_provenance(req)).encode())
             continue
 
+        if op == "geomdiff":
+            write_frame(stdout, json.dumps(_handle_geomdiff(req)).encode())
+            continue
+
         # op == "run"
         source = req.get("source", "")
         timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
@@ -119,6 +123,15 @@ def _handle_provenance(req: dict) -> dict:
     active_line = req.get("active_line")
     try:
         return provenance_render(source, active_line=active_line, sandbox=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _handle_geomdiff(req: dict) -> dict:
+    from app.kernel.geomdiff import geomdiff_shapes
+
+    try:
+        return geomdiff_shapes(req.get("old_source", ""), req.get("new_source", ""), sandbox=True)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
 

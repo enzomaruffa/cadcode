@@ -117,6 +117,15 @@ class SubprocessKernel:
             return {"error": data.error}
         return data
 
+    async def geomdiff(self, old_source: str, new_source: str) -> dict:
+        async with self._lock:
+            data = await asyncio.to_thread(
+                self._request, {"op": "geomdiff", "old_source": old_source, "new_source": new_source}, self._read_timeout
+            )
+        if isinstance(data, RunResult):
+            return {"error": data.error}
+        return data
+
     def _request(self, payload: dict, read_timeout: float) -> dict | RunResult:
         """Send one framed request, return the parsed JSON dict — or a
         RunResult.failure envelope if the worker hung/died."""

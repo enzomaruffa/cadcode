@@ -35,13 +35,23 @@ function parsePick(name: string): { shapeId: string; kind: SelectKind; index: nu
   return { shapeId: "/" + segs.join("/"), kind: "solid", index: 0 };
 }
 
-// PBR-ish lighting tuned for technical modeling (plan §6: technical render mode).
-const renderOptions = {
+// Two render modes off the same data (plan §6): technical (flat, edges
+// emphasized, for modeling) and presentation (PBR-ish, softer edges).
+const TECHNICAL_RENDER = {
   ambientIntensity: 1.0,
   directIntensity: 1.1,
   metalness: 0.3,
   roughness: 0.65,
   edgeColor: 0x707070,
+  defaultOpacity: 0.5,
+  normalLen: 0,
+};
+const PRESENTATION_RENDER = {
+  ambientIntensity: 1.3,
+  directIntensity: 2.2,
+  metalness: 0.55,
+  roughness: 0.35,
+  edgeColor: 0x2a2f37,
   defaultOpacity: 0.5,
   normalLen: 0,
 };
@@ -71,6 +81,7 @@ export function Viewport() {
   const rev = useStore((s) => s.geometryRev);
   const viewMode = useStore((s) => s.viewMode);
   const activeLine = useStore((s) => s.activeLine);
+  const presentation = useStore((s) => s.presentation);
 
   // Create the Display + Viewer once.
   useEffect(() => {
@@ -193,7 +204,7 @@ export function Viewport() {
         }
         viewer.clear();
       }
-      viewer.render(shapes, renderOptions, viewerOptions);
+      viewer.render(shapes, presentation ? PRESENTATION_RENDER : TECHNICAL_RENDER, viewerOptions);
       renderedOnce.current = true;
 
       // Enable click-to-select. The toolbar does exactly this trio: create the
@@ -209,7 +220,7 @@ export function Viewport() {
     } catch (e) {
       console.error("viewer.render failed", e);
     }
-  }, [rev, shapes, viewMode, activeLine]);
+  }, [rev, shapes, viewMode, activeLine, presentation]);
 
   return <div ref={containerRef} className="viewport" />;
 }

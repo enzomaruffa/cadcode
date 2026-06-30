@@ -18,6 +18,7 @@ export const CHECKPOINT = "checkpoint";
 export const ROLLBACK = "rollback";
 export const UNDO = "undo";
 export const REDO = "redo";
+export const PREVIEW_DIFF = "preview_diff";
 
 // backend -> frontend
 export const GEOMETRY = "geometry";
@@ -76,8 +77,8 @@ export interface GeometryPayload {
   params: Param[];
   stdout: string;
   stale: boolean;
-  mode?: "technical" | "printability";
-  print_stats?: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
+  mode?: "technical" | "printability" | "highlight" | "geomdiff";
+  print_stats?: Record<string, number | string> | null;
 }
 
 export type ViewMode = "technical" | "printability" | "highlight";

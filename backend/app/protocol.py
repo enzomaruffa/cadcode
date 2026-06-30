@@ -35,6 +35,7 @@ ROLLBACK = "rollback"
 SET_MODE = "set_mode"
 UNDO = "undo"
 REDO = "redo"
+PREVIEW_DIFF = "preview_diff"
 
 # backend -> frontend
 GEOMETRY = "geometry"

@@ -6,6 +6,8 @@ export function PrintabilityToggle() {
   const printStats = useStore((s) => s.printStats);
   const buildAxis = useStore((s) => s.buildAxis);
   const setBuildAxis = useStore((s) => s.setBuildAxis);
+  const presentation = useStore((s) => s.presentation);
+  const togglePresentation = useStore((s) => s.togglePresentation);
 
   return (
     <div className="viewmode">
@@ -18,6 +20,9 @@ export function PrintabilityToggle() {
         </button>
         <button className={viewMode === "printability" ? "on" : ""} onClick={() => setViewMode("printability")}>
           printability
+        </button>
+        <button className={presentation ? "on" : ""} onClick={togglePresentation} title="Presentation (PBR) render">
+          ✨
         </button>
       </div>
       {viewMode === "highlight" && (

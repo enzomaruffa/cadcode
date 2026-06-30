@@ -28,6 +28,8 @@ export function AgentPanel() {
   const sendChat = useStore((s) => s.sendChat);
   const acceptPatch = useStore((s) => s.acceptPatch);
   const rejectPatch = useStore((s) => s.rejectPatch);
+  const previewDiff = useStore((s) => s.previewDiff);
+  const diffStats = useStore((s) => s.diffStats);
   const selection = useStore((s) => s.selection);
 
   const [draft, setDraft] = useState("");
@@ -72,9 +74,18 @@ export function AgentPanel() {
               </div>
             )}
             <DiffView diff={pendingPatch.diff} />
+            {diffStats && (
+              <div className="patch-diffstats">
+                geometry diff: <span className="d-add">+{diffStats.added}</span>{" "}
+                <span className="d-rem">−{diffStats.removed}</span> regions
+              </div>
+            )}
             <div className="patch-actions">
               <button className="btn btn-accept" onClick={acceptPatch}>
                 Accept
+              </button>
+              <button className="btn" onClick={previewDiff} title="Show the geometric consequence in 3D">
+                Preview 3D
               </button>
               <button className="btn btn-reject" onClick={rejectPatch}>
                 Reject

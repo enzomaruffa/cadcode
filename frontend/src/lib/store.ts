@@ -11,6 +11,7 @@ import {
   GEOMETRY,
   HISTORY,
   MEASUREMENT,
+  PREVIEW_DIFF,
   REDO,
   REJECT_PATCH,
   ROLLBACK,
@@ -70,10 +71,12 @@ interface StoreState {
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
   activeLine: number | null; // editor cursor line (drives highlight glow)
   revealLine: number | null; // line to reveal in the editor (from a face click)
+  presentation: boolean; // technical (false) vs presentation/PBR (true) render
 
   chat: ChatMessage[];
   pendingPatch: AgentPatchPayload | null;
   agentBusy: boolean;
+  diffStats: { added: number; removed: number } | null;
 
   commits: Commit[];
   canUndo: boolean;
@@ -89,9 +92,11 @@ interface StoreState {
   setBuildAxis: (axis: "Z" | "X" | "Y") => void;
   setActiveLine: (line: number | null) => void;
   setRevealLine: (line: number | null) => void;
+  togglePresentation: () => void;
   sendChat: (text: string) => void;
   acceptPatch: () => void;
   rejectPatch: () => void;
+  previewDiff: () => void;
   checkpoint: (message?: string) => void;
   rollback: (sha: string) => void;
   undo: () => void;
@@ -125,9 +130,11 @@ export const useStore = create<StoreState>((set, get) => ({
   printStats: null,
   activeLine: null,
   revealLine: null,
+  presentation: false,
   chat: [],
   pendingPatch: null,
   agentBusy: false,
+  diffStats: null,
   commits: [],
   canUndo: false,
   canRedo: false,
@@ -173,7 +180,14 @@ export const useStore = create<StoreState>((set, get) => ({
             stdout: p.stdout ?? s.stdout,
             specs: incomingMode === "technical" ? (p.specs ?? []) : s.specs,
             params: incomingMode === "technical" ? (p.params ?? []) : s.params,
-            printStats: incomingMode === "printability" ? (p.print_stats ?? null) : s.printStats,
+            printStats:
+              incomingMode === "printability"
+                ? ((p.print_stats as unknown as StoreState["printStats"]) ?? null)
+                : s.printStats,
+            diffStats:
+              incomingMode === "geomdiff"
+                ? ((p.print_stats as unknown as { added: number; removed: number }) ?? null)
+                : s.diffStats,
           }));
           // Keep the heatmap live: if we're in printability mode but just got a
           // fresh technical render (e.g. after an edit), re-request the overlay.
@@ -256,6 +270,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setActiveLine: (line) => set({ activeLine: line }),
   setRevealLine: (line) => set({ revealLine: line }),
+  togglePresentation: () => set((s) => ({ presentation: !s.presentation })),
 
   setBuildAxis: (axis) => {
     set({ buildAxis: axis });
@@ -288,14 +303,21 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({
       source: patch.new_source,
       pendingPatch: null,
+      diffStats: null,
       chat: [...s.chat, { role: "assistant", text: "✓ patch accepted" }],
     }));
     send(ACCEPT_PATCH, { new_source: patch.new_source });
   },
 
   rejectPatch: () => {
-    set((s) => ({ pendingPatch: null, chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }] }));
+    set((s) => ({ pendingPatch: null, diffStats: null, chat: [...s.chat, { role: "assistant", text: "✗ patch rejected" }] }));
     send(REJECT_PATCH, {});
+    send(RUN, {}); // restore the normal render (in case a diff was being previewed)
+  },
+
+  previewDiff: () => {
+    const patch = get().pendingPatch;
+    if (patch) send(PREVIEW_DIFF, { new_source: patch.new_source });
   },
 
   checkpoint: (message) => send(CHECKPOINT, { message: message || "checkpoint" }),

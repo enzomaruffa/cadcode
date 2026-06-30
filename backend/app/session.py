@@ -218,6 +218,27 @@ class Session:
         self._pending_source = None
         await self.send(P.STATUS, P.StatusPayload(state="ok", detail="patch rejected").model_dump(), env.id)
 
+    async def _on_preview_diff(self, env: P.Envelope) -> None:
+        new_source = env.payload.get("new_source") or self._pending_source
+        if not new_source:
+            return
+        result = await self.kernel.geomdiff(self.doc.source, new_source)
+        if "error" in result:
+            await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+            return
+        await self.send(
+            P.GEOMETRY,
+            P.GeometryPayload(
+                shapes=result.get("shapes") or {},
+                states=result.get("states") or {},
+                bbox=result.get("bbox"),
+                mode="geomdiff",
+                print_stats=result.get("diff_stats"),
+            ).model_dump(),
+            env.id,
+        )
+        await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+
     # --- git + history -------------------------------------------------------
 
     def _gitstore(self) -> Any:

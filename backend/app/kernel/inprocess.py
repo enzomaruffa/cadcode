@@ -20,6 +20,7 @@ class Kernel(Protocol):
     async def measure_selection(self, kind: str, shape_id: str, index: int) -> dict: ...
     async def printability(self, build_axis: str = "Z") -> dict: ...
     async def provenance(self, source: str, active_line: int | None = None) -> dict: ...
+    async def geomdiff(self, old_source: str, new_source: str) -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -56,6 +57,11 @@ class InProcessKernel:
         from app.kernel.provenance import provenance_render
 
         return await asyncio.to_thread(provenance_render, source, active_line)
+
+    async def geomdiff(self, old_source: str, new_source: str) -> dict:
+        from app.kernel.geomdiff import geomdiff_shapes
+
+        return await asyncio.to_thread(geomdiff_shapes, old_source, new_source)
 
     async def close(self) -> None:  # symmetry with the subprocess kernel
         return None

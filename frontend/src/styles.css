@@ -634,6 +634,18 @@ body {
   color: var(--text);
 }
 
+.patch-diffstats {
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+.d-add {
+  color: var(--ok);
+}
+.d-rem {
+  color: var(--err);
+}
 .patch-actions {
   display: flex;
   gap: 8px;

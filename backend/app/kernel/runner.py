@@ -111,6 +111,30 @@ def _error_line(exc: BaseException) -> int | None:
     return line
 
 
+def run_objects(source: str, *, sandbox: bool = False) -> tuple[list[Any], str | None]:
+    """Run ``source`` and return the shown build123d objects (for boolean diffs),
+    plus an error string if it failed."""
+    builtins_override = None
+    if sandbox:
+        from app.kernel.sandbox import SandboxError, check_imports, safe_builtins
+
+        try:
+            check_imports(source)
+        except SandboxError as exc:
+            return [], f"SandboxError: {exc}"
+        builtins_override = safe_builtins()
+
+    ns, shown, _specs = _make_namespace(builtins_override)
+    try:
+        code = compile(source, SOURCE_FILENAME, "exec")
+        with redirect_stdout(io.StringIO()):
+            exec(code, ns)
+    except BaseException as exc:  # noqa: BLE001
+        return [], f"{type(exc).__name__}: {exc}"
+    objects = shown or _auto_collect(ns)
+    return [o for (o, _n, _c) in objects], None
+
+
 def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     """Execute ``source`` and return geometry or a structured error.
 
