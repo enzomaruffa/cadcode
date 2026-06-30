@@ -4,6 +4,8 @@ import { Viewport } from "./components/Viewport";
 import { StatusBar } from "./components/StatusBar";
 import { SelectionPanel } from "./components/SelectionPanel";
 import { AgentPanel } from "./components/AgentPanel";
+import { ParamsPanel } from "./components/ParamsPanel";
+import { PartsPalette } from "./components/PartsPalette";
 import { useStore } from "./lib/store";
 
 export default function App() {
@@ -23,6 +25,7 @@ export default function App() {
         <section className="pane pane-editor">
           <div className="pane-title">source</div>
           <EditorPane />
+          <ParamsPanel />
         </section>
         <section className="pane pane-viewport">
           <div className="pane-title">geometry</div>
@@ -33,6 +36,7 @@ export default function App() {
         </section>
         <section className="pane pane-agent">
           <div className="pane-title">agent</div>
+          <PartsPalette />
           <AgentPanel />
         </section>
       </div>

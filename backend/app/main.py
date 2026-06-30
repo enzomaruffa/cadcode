@@ -56,6 +56,25 @@ async def default_source() -> dict[str, str]:
     return {"source": DEFAULT_SOURCE}
 
 
+@app.get("/library")
+async def library() -> dict[str, list]:
+    """The parts catalog for the palette: signatures, docs, params + an
+    isometric wireframe thumbnail per part (plan §5)."""
+    from app.library import catalog
+    from app.thumbnail import iso_svg
+
+    parts = catalog()
+    for entry in parts:
+        try:
+            from lib import parts as _parts
+
+            fn = getattr(_parts, entry["name"], None)
+            entry["thumbnail"] = iso_svg(fn()) if fn else ""
+        except Exception:
+            entry["thumbnail"] = ""
+    return {"parts": parts}
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()

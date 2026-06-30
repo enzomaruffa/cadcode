@@ -51,6 +51,8 @@ class Session:
     async def _emit_result(self, result: RunResult, reply_to: str | None, *, stale_on_error: bool = True) -> None:
         if result.ok:
             self.doc.record_good(result)
+            from app.params import extract_params
+
             await self.send(
                 P.GEOMETRY,
                 P.GeometryPayload(
@@ -59,6 +61,7 @@ class Session:
                     bbox=result.bbox,
                     ops=result.ops,
                     specs=result.specs,
+                    params=extract_params(self.doc.source),
                     stdout=result.stdout,
                 ).model_dump(),
                 reply_to,
@@ -133,9 +136,10 @@ class Session:
         await self.send(P.STATUS, P.StatusPayload(state="running", detail="agent thinking…").model_dump())
         try:
             from app.agent import CadDeps
+            from app.library import catalog
 
             agent = self._agent_instance()
-            deps = CadDeps(source=self.doc.source, kernel=self.kernel, selection=self.selection)
+            deps = CadDeps(source=self.doc.source, kernel=self.kernel, selection=self.selection, library=catalog())
             result = await agent.run(message, deps=deps)
             patch = result.output
         except Exception as exc:  # noqa: BLE001 - surface agent/auth errors to the chat

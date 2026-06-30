@@ -21,6 +21,7 @@ ALLOWED_MODULES: frozenset[str] = frozenset(
     {
         "build123d",
         "bd_warehouse",
+        "lib",  # the project's shared design tokens + parts catalog (plan §5)
         "math",
         "cmath",
         "statistics",

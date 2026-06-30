@@ -1,25 +1,25 @@
 """The starter build123d script a new session opens with.
 
-Small enough to read at a glance, exercises solids + a fillet + a hole + color,
-so the round-trip is visibly working the moment the app loads.
+Small enough to read at a glance, exercises solids + a fillet + a hole + color +
+shared design tokens + executable specs, so the round-trip and CAD-as-TDD are
+visibly working the moment the app loads.
 """
 
 DEFAULT_SOURCE = '''\
 from build123d import *
+from lib.design import FILLET, M3_CLEARANCE_D  # shared design tokens (plan §5)
 
-# Design tokens (plan §5): change one, the whole part re-derives.
+# Part-specific parameters (drag the sliders to change these live).
 WIDTH = 80
 DEPTH = 50
 HEIGHT = 12
-FILLET = 4
-HOLE_D = 6
 
 with BuildPart() as plate:
     Box(WIDTH, DEPTH, HEIGHT)
-    # four mounting holes
+    # four mounting holes, sized from the shared M3 token
     with Locations((-30, -15), (30, -15), (-30, 15), (30, 15)):
-        Hole(radius=HOLE_D / 2)
-    # soften the vertical edges
+        Hole(radius=M3_CLEARANCE_D / 2)
+    # soften the vertical edges with the shared fillet token
     fillet(plate.edges().filter_by(Axis.Z), radius=FILLET)
 
 show(plate.part, name="plate", color="#9aa7ff")

@@ -40,12 +40,20 @@ export interface Spec {
   message: string;
 }
 
+export interface Param {
+  name: string;
+  value: number;
+  line: number;
+  is_int: boolean;
+}
+
 export interface GeometryPayload {
   shapes: TessShapes;
   states: Record<string, number[]>;
   bbox: BBox | null;
   ops: unknown[];
   specs: Spec[];
+  params: Param[];
   stdout: string;
   stale: boolean;
 }

@@ -20,6 +20,7 @@ import {
   type ErrorPayload,
   type GeometryPayload,
   type MeasurementPayload,
+  type Param,
   type SelectKind,
   type Spec,
   type StatusPayload,
@@ -53,6 +54,7 @@ interface StoreState {
   stdout: string;
   selection: MeasurementPayload | null;
   specs: Spec[];
+  params: Param[];
 
   chat: ChatMessage[];
   pendingPatch: AgentPatchPayload | null;
@@ -63,6 +65,7 @@ interface StoreState {
   runNow: () => void;
   sendSelect: (kind: SelectKind, shapeId: string, index: number) => void;
   clearSelection: () => void;
+  setParam: (line: number, name: string, value: number) => void;
   sendChat: (text: string) => void;
   acceptPatch: () => void;
   rejectPatch: () => void;
@@ -89,6 +92,7 @@ export const useStore = create<StoreState>((set, get) => ({
   stdout: "",
   selection: null,
   specs: [],
+  params: [],
   chat: [],
   pendingPatch: null,
   agentBusy: false,
@@ -132,6 +136,7 @@ export const useStore = create<StoreState>((set, get) => ({
             stale: !!p.stale,
             stdout: p.stdout ?? s.stdout,
             specs: p.specs ?? [],
+            params: p.params ?? [],
           }));
           break;
         }
@@ -183,6 +188,18 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   clearSelection: () => set({ selection: null }),
+
+  setParam: (line, name, value) => {
+    const lines = get().source.split("\n");
+    const idx = line - 1;
+    if (idx < 0 || idx >= lines.length) return;
+    // Replace the number after `NAME =` on that line, preserving the rest.
+    const re = new RegExp(`^(\\s*${name}\\s*=\\s*)(-?\\d+(?:\\.\\d+)?)(.*)$`);
+    const replaced = lines[idx].replace(re, (_m, pre, _num, rest) => `${pre}${value}${rest}`);
+    if (replaced === lines[idx]) return; // no match — bail rather than corrupt
+    lines[idx] = replaced;
+    get().setSource(lines.join("\n"));
+  },
 
   sendChat: (text) => {
     const t = text.trim();
