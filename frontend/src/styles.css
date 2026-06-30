@@ -96,9 +96,47 @@ body {
   flex: 0 0 auto;
 }
 
+.editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .editor {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.inline-edit {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  width: 320px;
+  max-width: calc(100% - 24px);
+}
+.inline-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(154, 167, 255, 0.15);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.inline-edit input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
 }
 
 .viewport-wrap {
