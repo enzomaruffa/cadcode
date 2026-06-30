@@ -31,9 +31,13 @@ SOURCE_FILENAME = "<cad-source>"
 LAST_SHOWN: dict[str, Any] = {}
 
 
-def _make_namespace(builtins_override: Any = None) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]]]:
-    """Build the exec globals, including the ``show`` collectors."""
+def _make_namespace(
+    builtins_override: Any = None,
+) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]], list[dict[str, Any]]]:
+    """Build the exec globals, including the ``show`` collectors and the
+    ``require`` spec collector (CAD-as-TDD, plan §7)."""
     shown: list[tuple[Any, str | None, Any]] = []
+    specs: list[dict[str, Any]] = []
 
     def show(*objs: Any, name: str | None = None, color: Any = None, **_kw: Any) -> Any:
         for i, obj in enumerate(objs):
@@ -46,6 +50,14 @@ def _make_namespace(builtins_override: Any = None) -> tuple[dict[str, Any], list
         shown.append((obj, name, color))
         return obj
 
+    def require(condition: Any, message: str = "") -> bool:
+        """A soft, executable spec (CAD-as-TDD). Unlike ``assert`` it never
+        raises — it records pass/fail so the geometry still renders and *all*
+        unmet specs are reported. The agent iterates until they pass."""
+        passed = bool(condition)
+        specs.append({"passed": passed, "message": message or "requirement"})
+        return passed
+
     import build123d as _bd
 
     ns: dict[str, Any] = {
@@ -53,13 +65,14 @@ def _make_namespace(builtins_override: Any = None) -> tuple[dict[str, Any], list
         "__builtins__": builtins_override if builtins_override is not None else __builtins__,
         "show": show,
         "show_object": show_object,
+        "require": require,
         "bd": _bd,
     }
     # `from build123d import *` so scripts can use the bare API.
     star = getattr(_bd, "__all__", None) or [n for n in dir(_bd) if not n.startswith("_")]
     for n in star:
         ns[n] = getattr(_bd, n)
-    return ns, shown
+    return ns, shown, specs
 
 
 def _is_renderable(obj: Any) -> bool:
@@ -113,7 +126,7 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
             return RunResult.failure(f"SandboxError: {exc}", line=exc.line)
         builtins_override = safe_builtins()
 
-    ns, shown = _make_namespace(builtins_override)
+    ns, shown, specs = _make_namespace(builtins_override)
     buf = io.StringIO()
     try:
         code = compile(source, SOURCE_FILENAME, "exec")
@@ -127,7 +140,7 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
 
     objects = shown or _auto_collect(ns)
     if not objects:
-        return RunResult.success({}, {}, None, stdout=buf.getvalue())
+        return RunResult.success({}, {}, None, stdout=buf.getvalue(), specs=specs)
 
     objs = [o for (o, _n, _c) in objects]
     names = [n for (_o, n, _c) in objects]
@@ -144,7 +157,7 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     for leaf_id, obj in zip(states.keys(), objs):
         LAST_SHOWN[leaf_id] = obj
 
-    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue())
+    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs)
 
 
 def _clean_traceback(full: str) -> str:

@@ -21,6 +21,7 @@ import {
   type GeometryPayload,
   type MeasurementPayload,
   type SelectKind,
+  type Spec,
   type StatusPayload,
   type TessShapes,
 } from "./protocol";
@@ -51,6 +52,7 @@ interface StoreState {
   error: ErrorInfo | null;
   stdout: string;
   selection: MeasurementPayload | null;
+  specs: Spec[];
 
   chat: ChatMessage[];
   pendingPatch: AgentPatchPayload | null;
@@ -86,6 +88,7 @@ export const useStore = create<StoreState>((set, get) => ({
   error: null,
   stdout: "",
   selection: null,
+  specs: [],
   chat: [],
   pendingPatch: null,
   agentBusy: false,
@@ -128,6 +131,7 @@ export const useStore = create<StoreState>((set, get) => ({
             geometryRev: s.geometryRev + 1,
             stale: !!p.stale,
             stdout: p.stdout ?? s.stdout,
+            specs: p.specs ?? [],
           }));
           break;
         }

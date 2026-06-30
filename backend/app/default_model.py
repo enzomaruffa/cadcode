@@ -23,4 +23,8 @@ with BuildPart() as plate:
     fillet(plate.edges().filter_by(Axis.Z), radius=FILLET)
 
 show(plate.part, name="plate", color="#9aa7ff")
+
+# Executable specs (CAD-as-TDD): the agent must keep these passing.
+require(plate.part.volume > 1000, "plate must have enough material")
+require(max(plate.part.bounding_box().size.X, plate.part.bounding_box().size.Y) <= 100, "footprint must fit in 100mm")
 '''

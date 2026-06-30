@@ -20,6 +20,7 @@ class RunResult:
     bbox: dict[str, float] | None = None
     ops: list[dict[str, Any]] = field(default_factory=list)
     measurements: dict[str, Any] = field(default_factory=dict)
+    specs: list[dict[str, Any]] = field(default_factory=list)
     stdout: str = ""
     # failure payload
     error: str | None = None
@@ -35,6 +36,7 @@ class RunResult:
         *,
         ops: list | None = None,
         measurements: dict | None = None,
+        specs: list | None = None,
         stdout: str = "",
     ) -> "RunResult":
         return cls(
@@ -44,6 +46,7 @@ class RunResult:
             bbox=bbox,
             ops=ops or [],
             measurements=measurements or {},
+            specs=specs or [],
             stdout=stdout,
         )
 
@@ -59,6 +62,7 @@ class RunResult:
             "bbox": self.bbox,
             "ops": self.ops,
             "measurements": self.measurements,
+            "specs": self.specs,
             "stdout": self.stdout,
             "error": self.error,
             "traceback": self.traceback,
@@ -74,6 +78,7 @@ class RunResult:
             bbox=d.get("bbox"),
             ops=d.get("ops", []),
             measurements=d.get("measurements", {}),
+            specs=d.get("specs", []),
             stdout=d.get("stdout", ""),
             error=d.get("error"),
             traceback=d.get("traceback", ""),

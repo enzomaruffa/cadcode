@@ -101,6 +101,7 @@ class GeometryPayload(BaseModel):
     states: dict[str, list[int]]
     bbox: dict[str, float] | None = None
     ops: list[dict[str, Any]] = Field(default_factory=list)
+    specs: list[dict[str, Any]] = Field(default_factory=list)
     stdout: str = ""
     # whether this geometry is the last *good* render kept after an error
     stale: bool = False

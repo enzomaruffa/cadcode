@@ -35,11 +35,17 @@ export interface AgentPatchPayload {
   new_source: string;
 }
 
+export interface Spec {
+  passed: boolean;
+  message: string;
+}
+
 export interface GeometryPayload {
   shapes: TessShapes;
   states: Record<string, number[]>;
   bbox: BBox | null;
   ops: unknown[];
+  specs: Spec[];
   stdout: string;
   stale: boolean;
 }

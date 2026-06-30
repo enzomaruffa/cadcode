@@ -15,12 +15,30 @@ validator that actually runs the patch and raises ``ModelRetry`` on failure.
 
 from __future__ import annotations
 
+import ast
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+def _require_calls(source: str) -> list[str]:
+    """The text of every ``require(...)`` call in the source. Used to detect an
+    agent weakening or deleting a spec to make it 'pass' (cheating)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    calls: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "require":
+            try:
+                calls.append(ast.unparse(node))
+            except Exception:
+                pass
+    return calls
 
 # Gemini 3.5 Flash by default (needs GEMINI_API_KEY / GOOGLE_API_KEY at run time).
 # Override with the CAD_AGENT_MODEL env var (any pydantic-ai model id).
@@ -95,13 +113,34 @@ def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
 
     @agent.output_validator
     async def validate_patch(ctx: RunContext[CadDeps], patch: Patch) -> Patch:
-        """Self-correct guarantee: the patch must actually run (plan §4 step 3)."""
+        """Self-correct guarantee: the patch must run *and* satisfy every
+        ``require(...)`` spec in the script (CAD-as-TDD, plan §4 step 3, §7)."""
         if patch.new_source.strip() == ctx.deps.source.strip():
             raise ModelRetry("new_source is unchanged from the current source — make the requested edit.")
         result = await ctx.deps.kernel.run(patch.new_source)
         if not result.ok:
             where = f" (line {result.error_line})" if result.error_line else ""
             raise ModelRetry(f"Your edit fails to run: {result.error}{where}. Fix new_source and return a working script.")
+
+        # Spec integrity: the agent may ADD require()s but must not change or
+        # delete the existing ones (no cheating by weakening the spec).
+        original = _require_calls(ctx.deps.source)
+        kept = _require_calls(patch.new_source)
+        missing = [r for r in original if r not in kept]
+        if missing:
+            raise ModelRetry(
+                "You changed or removed existing require(...) specs: "
+                + "; ".join(missing)
+                + ". Keep every original require() call verbatim and satisfy it by changing the geometry instead."
+            )
+
+        failed = [s.get("message", "requirement") for s in (result.specs or []) if not s.get("passed")]
+        if failed:
+            raise ModelRetry(
+                "Your edit runs but violates these require(...) specs: "
+                + "; ".join(failed)
+                + ". Adjust the geometry so every spec passes — do not weaken the specs."
+            )
         return patch
 
     return agent

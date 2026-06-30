@@ -58,6 +58,7 @@ class Session:
                     states=result.states or {},
                     bbox=result.bbox,
                     ops=result.ops,
+                    specs=result.specs,
                     stdout=result.stdout,
                 ).model_dump(),
                 reply_to,

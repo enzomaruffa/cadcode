@@ -447,6 +447,15 @@ body {
 .status-stale {
   color: var(--warn);
 }
+.status-specs.specs-pass {
+  color: var(--ok);
+}
+.status-specs.specs-fail {
+  color: var(--warn);
+}
+.specs-detail {
+  color: var(--text-dim);
+}
 .status-error {
   color: var(--err);
   font-family: ui-monospace, Menlo, monospace;
