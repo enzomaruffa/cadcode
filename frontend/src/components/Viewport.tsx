@@ -13,6 +13,7 @@ export function Viewport() {
   const [offset, setOffset] = useState(0.5);
 
   const [grid, setGrid] = useState(true);
+  const [physics, setPhysics] = useState(false);
 
   const shapes = useStore((s) => s.shapes);
   const rev = useStore((s) => s.geometryRev);
@@ -81,6 +82,7 @@ export function Viewport() {
         viewMode={viewMode}
         activeLine={activeLine}
         physical={physical}
+        physics={physics}
         onPick={onPick}
       />
       <div className="vp-toolbar">
@@ -148,6 +150,23 @@ export function Viewport() {
         <button className="vp-btn" onClick={() => viewerRef.current?.fitView()} title="Fit view">
           fit
         </button>
+        <div
+          className="vp-group"
+          title="Physics playground — parts fall under gravity; drag them (collisions respected)"
+        >
+          <button
+            className={physics ? "on" : ""}
+            onClick={() => setPhysics((p) => !p)}
+            title="Toggle gravity + drag playground"
+          >
+            {physics ? "◼ physics" : "▶ physics"}
+          </button>
+          {physics && (
+            <button onClick={() => viewerRef.current?.resetPhysics()} title="Drop parts back to their code positions">
+              reset
+            </button>
+          )}
+        </div>
       </div>
     </>
   );

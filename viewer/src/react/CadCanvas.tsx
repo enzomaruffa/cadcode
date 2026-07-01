@@ -21,6 +21,7 @@ export interface CadCanvasProps {
   activeLine?: number | null;
   highlight?: { faceLines?: number[] } | null;
   physical?: PhysicalData | null;
+  physics?: boolean; // interactive gravity/drag playground
   mode?: "select" | "section" | "measure";
   selectTopo?: "any" | "face" | "edge" | "vertex";
   interactive?: boolean;
@@ -39,6 +40,7 @@ export interface CadCanvasHandle {
   setGrid: (on: boolean) => void;
   setPose: (poses: Record<string, [[number, number, number], [number, number, number, number]]>) => void;
   flashLeaves: (ids: string[], hex: string) => void;
+  resetPhysics: () => void;
 }
 
 const presetFor = (p: RenderProfile | undefined): RenderPreset => (p === "presentation" ? PRESENTATION : TECHNICAL);
@@ -69,6 +71,7 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     setGrid: (on) => viewerRef.current?.setGrid(on),
     setPose: (poses) => viewerRef.current?.setPose(poses),
     flashLeaves: (ids, hex) => viewerRef.current?.flashLeaves(ids, hex),
+    resetPhysics: () => viewerRef.current?.resetPhysics(),
   }));
 
   // Create the viewer once.
@@ -126,6 +129,16 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     viewer.render(props.shapes, recolor ? TECHNICAL : presetFor(props.renderProfile));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.geometryRev, props.renderProfile, props.viewMode, props.shapes]);
+
+  // Physics playground on/off. Depends on geometryRev too so a re-render (which
+  // stops the sim, since it invalidates the bodies) restarts it on the new model.
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v) return;
+    if (props.physics) v.startPhysics();
+    else v.stopPhysics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.physics, props.geometryRev]);
 
   // Highlight mode: glow the active line's faces in place (no rebuild).
   useEffect(() => {

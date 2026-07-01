@@ -17,6 +17,7 @@ import { SelectionHighlight } from "../interaction/SelectionHighlight";
 import { Section, type SectionAxis } from "../interaction/Section";
 import { Measure } from "../interaction/Measure";
 import { PhysicalOverlay, type PhysicalData } from "../interaction/PhysicalOverlay";
+import { Physics } from "../interaction/Physics";
 
 export type InteractionMode = "select" | "measure";
 
@@ -47,10 +48,13 @@ export class CadViewer {
   private physical: PhysicalOverlay;
   private grid: Grid;
   private gizmo: Gizmo;
+  private physics: Physics;
   private mode: InteractionMode = "select";
 
   private framedOnce = false;
   private rafId: number | null = null;
+  private physicsRaf: number | null = null;
+  private lastPhysicsT = 0;
   private disposed = false;
   // Motion sim: leaves currently flashed for collision → their original color.
   private flashed = new Map<string, THREE.Color>();
@@ -90,6 +94,11 @@ export class CadViewer {
     this.physical = new PhysicalOverlay(this.scene, container);
     this.grid = new Grid(this.scene);
     this.gizmo = new Gizmo();
+    this.physics = new Physics(
+      this.renderer.domElement,
+      () => this.rig.camera,
+      (enabled) => (this.controls.controls.enabled = enabled),
+    );
 
     this.controller = new InteractionController(
       this.renderer.domElement,
@@ -110,6 +119,8 @@ export class CadViewer {
     if (this.disposed) return;
     if (preset) this.preset = preset;
 
+    // A rebuild replaces the leaves the physics bodies point at — stop the sim.
+    if (this.physics.active) this.stopPhysics();
     this.clearGraph();
     const sg = buildSceneGraph(shapes, this.preset, this.resolution);
     this.sceneGraph = sg;
@@ -349,10 +360,51 @@ export class CadViewer {
     this.requestRender();
   }
 
+  /** Interactive physics playground: parts fall under gravity onto a floor and
+   * can be grabbed + dragged (a constraint pulls the grabbed part toward the
+   * pointer, so it pushes and is blocked by the others). Ephemeral — stopping
+   * restores the code-truth poses. Runs a continuous loop while active. */
+  startPhysics(): void {
+    if (this.disposed || !this.sceneGraph || this.physics.active) return;
+    this.selection.clear();
+    this.setPicking(false); // the physics grab owns the pointer while playing
+    this.physics.start(this.sceneGraph);
+    this.lastPhysicsT = performance.now();
+    this.physicsLoop();
+  }
+
+  stopPhysics(): void {
+    if (this.physicsRaf != null) cancelAnimationFrame(this.physicsRaf);
+    this.physicsRaf = null;
+    if (this.physics.active) this.physics.stop();
+    if (!this.disposed) this.setPicking(true);
+    this.requestRender();
+  }
+
+  resetPhysics(): void {
+    this.physics.reset();
+  }
+
+  get physicsActive(): boolean {
+    return this.physics.active;
+  }
+
+  private physicsLoop(): void {
+    if (this.disposed || !this.physics.active) return;
+    const now = performance.now();
+    const dt = Math.min((now - this.lastPhysicsT) / 1000, 1 / 30);
+    this.lastPhysicsT = now;
+    this.physics.step(dt);
+    this.draw();
+    this.physicsRaf = requestAnimationFrame(() => this.physicsLoop());
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     if (this.rafId != null) cancelAnimationFrame(this.rafId);
+    if (this.physicsRaf != null) cancelAnimationFrame(this.physicsRaf);
+    this.physics.dispose();
     this.controller.dispose();
     this.controls.dispose();
     this.clearGraph();
