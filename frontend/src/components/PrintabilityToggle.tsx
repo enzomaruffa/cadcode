@@ -10,6 +10,12 @@ export function PrintabilityToggle() {
   const setBuildAxis = useStore((s) => s.setBuildAxis);
   const presentation = useStore((s) => s.presentation);
   const togglePresentation = useStore((s) => s.togglePresentation);
+  // The diagnostic modes run through the single-buffer kernel; they don't apply
+  // to a project file (rendered by the project runner). Disable them there.
+  const isProjectFile = useStore((s) => !!s.docs.find((d) => d.id === s.activeDocId)?.origin);
+  const diagTitle = isProjectFile
+    ? "Not available for project files yet — open a standalone part to use this"
+    : undefined;
 
   return (
     <div className="viewmode">
@@ -17,16 +23,36 @@ export function PrintabilityToggle() {
         <button className={viewMode === "technical" ? "on" : ""} onClick={() => setViewMode("technical")}>
           technical
         </button>
-        <button className={viewMode === "highlight" ? "on" : ""} onClick={() => setViewMode("highlight")}>
+        <button
+          className={viewMode === "highlight" ? "on" : ""}
+          onClick={() => setViewMode("highlight")}
+          disabled={isProjectFile}
+          title={diagTitle}
+        >
           highlight
         </button>
-        <button className={viewMode === "printability" ? "on" : ""} onClick={() => setViewMode("printability")}>
+        <button
+          className={viewMode === "printability" ? "on" : ""}
+          onClick={() => setViewMode("printability")}
+          disabled={isProjectFile}
+          title={diagTitle}
+        >
           printability
         </button>
-        <button className={viewMode === "physical" ? "on" : ""} onClick={() => setViewMode("physical")}>
+        <button
+          className={viewMode === "physical" ? "on" : ""}
+          onClick={() => setViewMode("physical")}
+          disabled={isProjectFile}
+          title={diagTitle}
+        >
           physical
         </button>
-        <button className={viewMode === "motion" ? "on" : ""} onClick={() => setViewMode("motion")}>
+        <button
+          className={viewMode === "motion" ? "on" : ""}
+          onClick={() => setViewMode("motion")}
+          disabled={isProjectFile}
+          title={diagTitle}
+        >
           motion
         </button>
         <button

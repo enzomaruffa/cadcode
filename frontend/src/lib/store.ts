@@ -488,12 +488,17 @@ export const useStore = create<StoreState>()(
         const doc = get().docs.find((d) => d.id === id);
         if (!doc) return;
         if (debounceTimer) clearTimeout(debounceTimer);
+        // The diagnostic view modes run through the single-buffer kernel and don't
+        // work on project files — drop back to technical when opening one.
+        const vm = get().viewMode;
+        const resetVm = doc.origin && vm !== "technical" ? { viewMode: "technical" as ViewMode } : {};
         set({
           activeDocId: id,
           source: doc.source,
           selection: null,
           error: null,
           saveState: doc.origin ? "saved" : null,
+          ...resetVm,
         });
         if (doc.origin)
           void runProjectDoc(doc.origin, doc.source); // project file → project runner

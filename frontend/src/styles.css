@@ -685,8 +685,12 @@ textarea {
     background var(--t-fast) var(--ease),
     color var(--t-fast) var(--ease);
 }
-.viewmode-toggle button:hover {
+.viewmode-toggle button:hover:not(:disabled) {
   color: var(--text);
+}
+.viewmode-toggle button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 .viewmode-toggle button.on {
   background: var(--accent);
