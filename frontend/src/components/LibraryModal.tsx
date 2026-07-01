@@ -141,11 +141,19 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
                     <div className="lib-doc">
                       {selected.kind} in project <code>{selected.project}</code>
                     </div>
-                    <code className="lib-sig">
-                      {selected.kind === "part"
-                        ? `from parts.${selected.name} import ${selected.name}`
-                        : `scenes/${selected.name}.py`}
-                    </code>
+                    {selected.kind === "part" ? (
+                      <>
+                        <code className="lib-sig">
+                          within {selected.project}: from parts.{selected.name} import {selected.name}
+                        </code>
+                        <code className="lib-sig">
+                          from another project: from projects.{selected.project}.parts.{selected.name} import{" "}
+                          {selected.name}
+                        </code>
+                      </>
+                    ) : (
+                      <code className="lib-sig">scenes/{selected.name}.py</code>
+                    )}
                     <div className="lib-detail-actions">
                       <button
                         className="lib-add"

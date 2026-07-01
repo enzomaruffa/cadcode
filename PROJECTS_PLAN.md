@@ -26,7 +26,7 @@ projects/<project>/
 4. **File view**: a collapsible file tree (project ▸ parts / scenes / project.py) — lives above/ў the agent pane (reuse that column; toggle between "files" and "agent"). Selecting a file opens it as an editor tab.
 5. **Project constants**: `project.py` edited via the existing tokens modal, scoped to the active project; parts/scenes import from it.
 6. **Scenes**: a scene doc type that imports parts + assembles; runs through the physics/animation/interaction pipeline (built alongside the concurrent motion work).
-7. **Cross-project parts**: parts are importable across projects; the library modal groups by project.
+7. **Cross-project parts** *(done)*: any project can import another's part with `from projects.<other>.parts.<name> import <name>`. The runner materializes every project into one `projects` package namespace (`app/project_runner.py`), rewriting each project's local imports (`from project`/`from parts.x`) to absolute `projects.<pid>.…` so projects coexist and each part keeps resolving its OWN constants. The library modal groups by project and shows both the intra-project and cross-project import forms.
 
 ## Multi-file agent (confirmed representation)
 

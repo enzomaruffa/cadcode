@@ -1,14 +1,24 @@
-"""Run a whole project — a scene (or part) that imports the project's own
-parts + constants. Materializes the project + any uncommitted edits into a temp
-dir on ``sys.path`` so ``import project`` and ``from parts.x import x`` resolve,
-then executes the run-target through the normal runner.
+"""Run a whole project — a scene (or part) that imports the project's own parts
++ constants, and optionally parts from OTHER projects.
 
-This is the foundation for scene rendering and for the multi-file agent's
+Every project is materialized into one temp workspace as a package under a shared
+``projects`` namespace (``projects/<pid>/{__init__, project.py, parts/, scenes/}``),
+and each project's *local* imports are rewritten to be absolute under its own
+package. So:
+
+  * within a project you still write clean bare imports — ``from project import
+    UNIT``, ``from parts.base import base`` — which are rewritten at run time;
+  * any project can reuse another's part with ``from projects.<other>.parts.<name>
+    import <name>`` (already absolute — left untouched).
+
+The rewrite is line-based (not AST) so line numbers survive for error mapping.
+This is the foundation for scene rendering and the multi-file agent's
 edit -> run -> view -> edit loop (it dry-runs candidate edits here).
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 import tempfile
@@ -16,10 +26,67 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from app.projects import _file_path, _project_dir
+from app.projects import ROOT, _file_path, _ident, _project_dir
 
 # run_project mutates global sys.path / sys.modules, so runs must not overlap.
 _RUN_LOCK = threading.Lock()
+
+# Project-local imports to rewrite to `projects.<pid>.…`. `from projects.…` is
+# already absolute and does NOT match these (project != projects, parts != …).
+_FROM_PROJECT = re.compile(r"^(\s*from\s+)project(\s+import\s+)")
+_FROM_PARTS = re.compile(r"^(\s*from\s+)parts(\.[\w.]+)?(\s+import\s+)")
+
+
+def _rewrite_imports(source: str, pid: str) -> str:
+    """Rewrite a project file's local imports (`from project import …`,
+    `from parts.x import …`) to be absolute under the `projects.<pid>` package."""
+    out = []
+    for line in source.splitlines():
+        line = _FROM_PROJECT.sub(rf"\1projects.{pid}.project\2", line)
+        line = _FROM_PARTS.sub(rf"\1projects.{pid}.parts\2\3", line)
+        out.append(line)
+    return "\n".join(out)
+
+
+def _write_pkg(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "__init__.py").write_text("")
+
+
+def _materialize(tmp: Path, overrides: dict[str, str], current: str) -> None:
+    """Copy EVERY project into ``tmp/projects/<pid>/`` as a package (rewriting
+    local imports), then apply the current project's uncommitted overrides."""
+    root = tmp / "projects"
+    _write_pkg(root)
+    if ROOT.is_dir():
+        for proj_dir in sorted(ROOT.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            pid = proj_dir.name  # created via _ident → already a valid identifier
+            dest = root / pid
+            _write_pkg(dest)
+            _write_pkg(dest / "parts")
+            _write_pkg(dest / "scenes")
+            constants = proj_dir / "project.py"
+            if constants.is_file():
+                (dest / "project.py").write_text(_rewrite_imports(constants.read_text(), pid))
+            for sub in ("parts", "scenes"):
+                d = proj_dir / sub
+                if not d.is_dir():
+                    continue
+                for f in d.glob("*.py"):
+                    if f.stem != "__init__":
+                        (dest / sub / f.name).write_text(_rewrite_imports(f.read_text(), pid))
+
+    # Overrides are keyed project-relative for the CURRENT project.
+    cur = root / current
+    _write_pkg(cur)
+    _write_pkg(cur / "parts")
+    _write_pkg(cur / "scenes")
+    for rel, source in (overrides or {}).items():
+        p = cur / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_rewrite_imports(source, current))
 
 
 def run_project(
@@ -46,28 +113,25 @@ def run_project(
 
     from app.kernel.runner import run_source
 
+    current = _ident(project)
     tmp = Path(tempfile.mkdtemp(prefix="cadproj_"))
-    added_path = str(tmp)
     with _RUN_LOCK:
-        return _run_locked(tmp, added_path, src_dir, target, overrides, preview_source, run_source)
+        return _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source)
 
 
-def _run_locked(tmp, added_path, src_dir, target, overrides, preview_source, run_source) -> dict[str, Any]:
+def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source) -> dict[str, Any]:
+    added_path = str(tmp)
     try:
-        shutil.copytree(src_dir, tmp, dirs_exist_ok=True)
-        for rel, source in (overrides or {}).items():
-            p = tmp / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(source)
+        _materialize(tmp, overrides or {}, current)
 
         if preview_source is not None:
-            target_source = preview_source
+            target_source = _rewrite_imports(preview_source, current)
         else:
-            target_rel = target.relative_to(src_dir)
-            target_file = tmp / target_rel
-            if not target_file.is_file():
+            target_rel = target.relative_to(src_dir)  # e.g. scenes/main.py or project.py
+            mat = tmp / "projects" / current / target_rel
+            if not mat.is_file():
                 return {"ok": False, "error": f"run target {target_rel} does not exist"}
-            target_source = target_file.read_text()
+            target_source = mat.read_text()  # already rewritten during materialize
 
         sys.path.insert(0, added_path)
         try:
@@ -75,8 +139,8 @@ def _run_locked(tmp, added_path, src_dir, target, overrides, preview_source, run
         finally:
             if added_path in sys.path:
                 sys.path.remove(added_path)
-            # Drop the project's modules so the next run re-imports fresh sources.
-            for mod in [m for m in sys.modules if m == "project" or m == "parts" or m.startswith("parts.")]:
+            # Drop the projects package so the next run re-imports fresh sources.
+            for mod in [m for m in sys.modules if m == "projects" or m.startswith("projects.")]:
                 del sys.modules[mod]
         return result.as_dict()
     finally:
