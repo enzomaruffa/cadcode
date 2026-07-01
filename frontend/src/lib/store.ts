@@ -307,10 +307,12 @@ export const useStore = create<StoreState>()(
 
         socket.onopen = () => {
           set({ conn: "open" });
-          // If a buffer was restored from localStorage, sync it to the fresh backend
-          // session (which starts on the default source) so it renders our work.
-          const src = get().source;
-          if (src) send(EDIT, { source: src });
+          // Re-render the restored buffer on (re)connect. A project file must go
+          // through the project runner (project on sys.path, sandbox off) — sending
+          // it over the single-buffer WS would sandbox-reject `from project import`.
+          const active = get().docs.find((d) => d.id === get().activeDocId);
+          if (active?.origin) void runProjectDoc(active.origin, active.source);
+          else if (get().source) send(EDIT, { source: get().source });
         };
         socket.onclose = () => {
           set({ conn: "closed" });
