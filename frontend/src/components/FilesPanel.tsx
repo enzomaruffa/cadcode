@@ -10,10 +10,12 @@ interface ProjectTree {
 }
 
 // A project file tree (project.py + parts/ + scenes/). Clicking a file opens it
-// as an editor tab. Lives in the agent column (toggle at the top).
-export function FilesPanel() {
+// as an editor tab and makes it the project agent's run target. Lives in the
+// agent column (toggle at the top).
+export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
   const [projects, setProjects] = useState<ProjectTree[]>([]);
   const openDoc = useStore((s) => s.openDoc);
+  const setRunTarget = useStore((s) => s.setRunTarget);
 
   const refresh = () =>
     fetch(`${HTTP_URL}/projects`)
@@ -30,9 +32,17 @@ export function FilesPanel() {
       const r = await fetch(`${HTTP_URL}/projects/${project}/file?kind=${kind}&name=${encodeURIComponent(name)}`);
       const d: { source?: string } = await r.json();
       if (typeof d.source === "string") openDoc(label, d.source);
+      // Make this the project agent's run/render target (scenes render; the
+      // agent edits the whole project around whatever file you're on).
+      setRunTarget(project, kind, name);
     } catch {
       /* ignore */
     }
+  };
+
+  const runScene = (project: string, scene: string) => {
+    setRunTarget(project, "scene", scene);
+    onOpenProject?.();
   };
 
   const newProject = async () => {
@@ -74,9 +84,18 @@ export function FilesPanel() {
               </button>
             ))}
             {p.scenes.map((scene) => (
-              <button className="files-file" key={`sc-${scene}`} onClick={() => open(p.name, "scene", scene, scene)}>
-                scenes/{scene}.py
-              </button>
+              <div className="files-file-row" key={`sc-${scene}`}>
+                <button className="files-file" onClick={() => open(p.name, "scene", scene, scene)}>
+                  scenes/{scene}.py
+                </button>
+                <button
+                  className="files-run"
+                  onClick={() => runScene(p.name, scene)}
+                  title="Run this scene in the project agent"
+                >
+                  ▶
+                </button>
+              </div>
             ))}
           </div>
         ))}

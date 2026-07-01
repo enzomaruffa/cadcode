@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { AgentPanel } from "./AgentPanel";
 import { FilesPanel } from "./FilesPanel";
+import { ProjectAgentPanel } from "./ProjectAgentPanel";
 
-// The left column toggles between the agent chat and the project file tree — one
-// column, two views, to keep the screen count down.
+// The left column toggles between the single-buffer agent, the project file
+// tree, and the whole-project multi-file agent — one column, three views, to
+// keep the screen count down.
 export function AgentColumn() {
-  const [tab, setTab] = useState<"agent" | "files">("agent");
+  const [tab, setTab] = useState<"agent" | "files" | "project">("agent");
   return (
     <div className="agent-column">
       <div className="agent-column-tabs">
@@ -15,8 +17,13 @@ export function AgentColumn() {
         <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>
           files
         </button>
+        <button className={tab === "project" ? "on" : ""} onClick={() => setTab("project")}>
+          project ✳
+        </button>
       </div>
-      {tab === "agent" ? <AgentPanel /> : <FilesPanel />}
+      {tab === "agent" && <AgentPanel />}
+      {tab === "files" && <FilesPanel onOpenProject={() => setTab("project")} />}
+      {tab === "project" && <ProjectAgentPanel />}
     </div>
   );
 }

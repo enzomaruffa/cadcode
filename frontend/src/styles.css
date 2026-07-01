@@ -1133,6 +1133,211 @@ textarea {
   color: var(--accent);
   background: var(--surface);
 }
+.files-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.files-file-row .files-file {
+  flex: 1 1 auto;
+}
+.files-run {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+.files-run:hover {
+  color: var(--accent);
+}
+
+/* --- project (multi-file) agent --- */
+.proj-agent {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.proj-agent-empty {
+  padding: var(--sp-4);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.proj-agent-empty em {
+  color: var(--accent);
+  font-style: normal;
+}
+.proj-agent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+.proj-agent-target {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.proj-agent-proj {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.proj-agent-run {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.proj-agent-runbtn {
+  flex: 0 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.proj-agent-runbtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+.proj-agent-note {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--ok);
+  font-size: var(--fs-xs);
+}
+.proj-agent-status {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.proj-agent-patch {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--sp-2);
+}
+.proj-agent-rationale {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  padding: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  background: var(--surface);
+  border-radius: var(--r-md);
+}
+.proj-agent-file {
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.proj-agent-file-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border-soft);
+}
+.proj-agent-new {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ok);
+  border: 1px solid var(--ok);
+  border-radius: var(--r-sm);
+  padding: 0 4px;
+}
+.proj-agent-diff {
+  height: 160px;
+}
+.proj-agent-actions {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.proj-agent-accept,
+.proj-agent-reject {
+  flex: 1 1 auto;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.proj-agent-accept {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-pane);
+  font-weight: 600;
+}
+.proj-agent-accept:hover {
+  filter: brightness(1.08);
+}
+.proj-agent-reject {
+  background: none;
+  color: var(--text-dim);
+}
+.proj-agent-reject:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+.proj-agent-input {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+.proj-agent-input textarea {
+  flex: 1 1 auto;
+  resize: none;
+  min-height: 52px;
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2);
+}
+.proj-agent-input textarea:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+.proj-agent-input button {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  background: var(--accent);
+  border: none;
+  color: var(--bg-pane);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.proj-agent-input button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* --- agent panel --- */
 .agent {

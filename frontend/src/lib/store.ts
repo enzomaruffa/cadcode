@@ -115,6 +115,10 @@ interface StoreState {
   canUndo: boolean;
   canRedo: boolean;
 
+  // The active project + which file the project-agent runs/renders as the target.
+  activeProject: string | null;
+  runTarget: { kind: string; name: string } | null;
+
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   newDoc: () => void;
@@ -141,6 +145,9 @@ interface StoreState {
   rollback: (sha: string) => void;
   undo: () => void;
   redo: () => void;
+
+  setRunTarget: (project: string, kind: string, name: string) => void;
+  renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -188,6 +195,8 @@ export const useStore = create<StoreState>()(
       commits: [],
       canUndo: false,
       canRedo: false,
+      activeProject: null,
+      runTarget: null,
 
       connect: () => {
         // Guard against React StrictMode's double-invoke opening two sockets.
@@ -467,6 +476,10 @@ export const useStore = create<StoreState>()(
       rollback: (sha) => send(ROLLBACK, { to: sha }),
       undo: () => send(UNDO, {}),
       redo: () => send(REDO, {}),
+
+      setRunTarget: (project, kind, name) => set({ activeProject: project, runTarget: { kind, name } }),
+      renderShapes: (shapes, specs) =>
+        set((s) => ({ shapes, geometryRev: s.geometryRev + 1, specs, stale: false, error: null, runState: "ok" })),
     }),
     {
       name: "cadcode.store",
@@ -481,6 +494,8 @@ export const useStore = create<StoreState>()(
         viewMode: s.viewMode,
         buildAxis: s.buildAxis,
         presentation: s.presentation,
+        activeProject: s.activeProject,
+        runTarget: s.runTarget,
       }),
     },
   ),
