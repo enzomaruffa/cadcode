@@ -144,6 +144,7 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* mobile: exclude the browser URL bar so the tab bar stays visible */
 }
 
 .topbar {
