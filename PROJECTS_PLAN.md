@@ -28,6 +28,12 @@ projects/<project>/
 6. **Scenes**: a scene doc type that imports parts + assembles; runs through the physics/animation/interaction pipeline (built alongside the concurrent motion work).
 7. **Cross-project parts** *(done)*: any project can import another's part with `from projects.<other>.parts.<name> import <name>`. The runner materializes every project into one `projects` package namespace (`app/project_runner.py`), rewriting each project's local imports (`from project`/`from parts.x`) to absolute `projects.<pid>.…` so projects coexist and each part keeps resolving its OWN constants. The library modal groups by project and shows both the intra-project and cross-project import forms.
 
+## Physics playground (shipped) + planned: exact concave collision
+
+The viewport has an interactive rigid-body sandbox (▶ physics): gravity, a ground plane, grab-and-drag with collisions (cannon-es, client-side, works on any rendered scene). Each part gets a **convex-hull** collider today, so concave features are filled in (soap rests on the perforated dish's rim, doesn't drop through a hole).
+
+**Planned — exact concave collision** (`bd claude-cad-xzo`, deferred): cannon-es only collides Trimesh with Sphere/Plane, so this needs either (A) **convex decomposition** (V-HACD → a compound of convex hulls per concave part, holes = gaps; stays on cannon) or (B) **migrate to Rapier** (WASM, has built-in decomposition + trimesh). Recommendation A. Ephemeral-only today; a future "bake dragged poses to code" (`Pos(...)`) would let the playground author layouts.
+
 ## Multi-file agent (confirmed representation)
 
 The agent edits the **whole project**, not one buffer — and editing a part may cascade to other parts. Representation:
