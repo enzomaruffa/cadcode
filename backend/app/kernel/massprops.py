@@ -48,6 +48,38 @@ def _convex_hull_2d(pts: list[tuple[float, float]]) -> list[tuple[float, float]]
     return lower[:-1] + upper[:-1]
 
 
+def _footprint(objs: list[Any], base_z: float) -> list[tuple[float, float]]:
+    """XY points of the support polygon — the geometry resting on the build
+    plate. Samples the outline of each downward face at ``base_z`` (so a round
+    base gives a circle, not the 1-2 B-rep vertices a cylinder actually has),
+    falling back to raw vertices near ``base_z`` for odd topologies."""
+    band = max(_Z_TOL, 0.05)
+    pts: list[tuple[float, float]] = []
+    for obj in objs:
+        try:
+            faces = obj.faces()
+        except Exception:
+            continue
+        for f in faces:
+            try:
+                if f.normal_at().Z >= -0.5 or abs(f.center().Z - base_z) >= band:
+                    continue
+                wire = f.outer_wire()
+                for i in range(48):
+                    p = wire @ (i / 48.0)
+                    pts.append((p.X, p.Y))
+            except Exception:
+                continue
+    if len(pts) >= 3:
+        return pts
+    for obj in objs:  # fallback: raw vertices resting on the plate
+        try:
+            pts.extend((v.X, v.Y) for v in obj.vertices() if abs(v.Z - base_z) < band)
+        except Exception:
+            continue
+    return pts
+
+
 def _tip_analysis(
     hull: list[tuple[float, float]], com_xy: tuple[float, float], com_height: float
 ) -> tuple[float | None, bool]:
@@ -103,7 +135,6 @@ def mass_properties(objs: list[Any], materials: list[dict[str, Any]]) -> dict[st
     part_moi_vol: list[np.ndarray] = []  # mm⁵, volume-weighted, about the part COM
     part_rho: list[float] = []  # g/mm³
 
-    lows: list[tuple[float, float]] = []
     base_z = math.inf
     names = set()
 
@@ -139,14 +170,8 @@ def mass_properties(objs: list[Any], materials: list[dict[str, Any]]) -> dict[st
     if total_vol_mm3 <= 0 or not part_mass:
         return {"error": "geometry has no solid volume"}
 
-    # Footprint: vertices resting on the lowest plane, across every part.
-    for obj in objs:
-        try:
-            for v in obj.vertices():
-                if abs(v.Z - base_z) < max(_Z_TOL, 1e-3):
-                    lows.append((v.X, v.Y))
-        except Exception:
-            continue
+    # Footprint: the support polygon where the geometry meets the build plate.
+    lows = _footprint(objs, base_z)
 
     masses = np.array(part_mass)
     global_com = (np.stack(part_com) * masses[:, None]).sum(axis=0) / masses.sum()
