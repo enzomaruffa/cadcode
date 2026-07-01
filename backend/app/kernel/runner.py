@@ -86,24 +86,23 @@ def _make_namespace(
         specs.append({"passed": passed, "message": message or "requirement"})
         return passed
 
-    import build123d as _bd
-
     ns: dict[str, Any] = {
         "__name__": "__cad__",
         "__builtins__": builtins_override if builtins_override is not None else __builtins__,
+        # The cadcode DSL — provided like builtins (scripts can't import these).
         "show": show,
         "show_object": show_object,
         "require": require,
-        "bd": _bd,
         # Motion-sim clearance (plan §7): defined so a script's
         # `require(min_clearance_through_motion >= CLEARANCE)` runs (and passes)
         # in the normal technical render; the sim re-execs with the real value.
         "min_clearance_through_motion": float("inf"),
     }
-    # `from build123d import *` so scripts can use the bare API.
-    star = getattr(_bd, "__all__", None) or [n for n in dir(_bd) if not n.startswith("_")]
-    for n in star:
-        ns[n] = getattr(_bd, n)
+    # NOTE: we deliberately do NOT inject `from build123d import *` (or a `bd`
+    # handle). The script is real Python and the single source of truth — it must
+    # import the names it uses (`from build123d import Box, Cylinder, ...`), so a
+    # missing import is a real NameError, and a buffer that runs here behaves the
+    # same when saved as a library part (imported normally, with no injection).
     return ns, shown, specs
 
 
@@ -120,7 +119,7 @@ def _auto_collect(ns: dict[str, Any]) -> list[tuple[Any, str | None, Any, dict[s
     default_mat = _resolve_material()
     collected: list[tuple[Any, str | None, Any, dict[str, Any]]] = []
     for name, obj in ns.items():
-        if name.startswith("_") or name in ("show", "show_object", "bd"):
+        if name.startswith("_") or name in ("show", "show_object", "require"):
             continue
         try:
             if _is_renderable(obj):
