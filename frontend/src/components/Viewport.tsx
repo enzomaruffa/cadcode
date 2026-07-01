@@ -12,6 +12,8 @@ export function Viewport() {
   const [axis, setAxis] = useState<SectionAxis | null>(null);
   const [offset, setOffset] = useState(0.5);
 
+  const [grid, setGrid] = useState(true);
+
   const shapes = useStore((s) => s.shapes);
   const rev = useStore((s) => s.geometryRev);
   const viewMode = useStore((s) => s.viewMode);
@@ -71,12 +73,14 @@ export function Viewport() {
             clear
           </button>
         )}
-        <div className="vp-group" title="Section plane">
+        <div className="vp-group" title="Section plane — slice the model along an axis">
+          <span className="vp-label">cut</span>
           {(["x", "y", "z"] as const).map((a) => (
             <button
               key={a}
               className={axis === a ? "on" : ""}
               onClick={() => applySection(axis === a ? null : a, offset)}
+              title={`Cut along ${a.toUpperCase()}`}
             >
               {a.toUpperCase()}
             </button>
@@ -98,6 +102,17 @@ export function Viewport() {
             title="Section offset"
           />
         )}
+        <button
+          className={grid ? "vp-btn on" : "vp-btn"}
+          onClick={() => {
+            const next = !grid;
+            setGrid(next);
+            viewerRef.current?.setGrid(next);
+          }}
+          title="Toggle the ground grid"
+        >
+          grid
+        </button>
         <button className="vp-btn" onClick={() => viewerRef.current?.fitView()} title="Fit view">
           fit
         </button>

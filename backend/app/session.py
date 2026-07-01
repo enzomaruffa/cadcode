@@ -114,10 +114,17 @@ class Session:
             return
         await handler(env)
 
+    async def _send_undo_state(self) -> None:
+        # Lightweight can_undo/can_redo push (no git log) so the frontend's
+        # undo/redo buttons enable after ordinary edits + accepted patches too.
+        await self.send(P.HISTORY, {"can_undo": self.doc.can_undo, "can_redo": self.doc.can_redo})
+
     async def _on_edit(self, env: P.Envelope) -> None:
         payload = P.EditPayload(**env.payload)
-        self.doc.set_source(payload.source)
+        changed = self.doc.set_source(payload.source)
         await self.run_current(env.id)
+        if changed:
+            await self._send_undo_state()
 
     async def _on_run(self, env: P.Envelope) -> None:
         await self.run_current(env.id)
@@ -216,8 +223,10 @@ class Session:
             await self.send(P.STATUS, P.StatusPayload(state="idle", detail="no pending patch").model_dump(), env.id)
             return
         self._pending_source = None
-        self.doc.set_source(new_source)
+        changed = self.doc.set_source(new_source)
         await self.run_current(env.id)
+        if changed:
+            await self._send_undo_state()
 
     async def _on_reject_patch(self, env: P.Envelope) -> None:
         self._pending_source = None

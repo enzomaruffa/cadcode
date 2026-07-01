@@ -9,6 +9,7 @@ import { AgentPanel } from "./components/AgentPanel";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { LibraryModal } from "./components/LibraryModal";
 import { EditorColorsModal } from "./components/EditorColorsModal";
+import { HelpModal } from "./components/HelpModal";
 import { FileMenu } from "./components/FileMenu";
 import { HistoryControls } from "./components/HistoryControls";
 import { useStore } from "./lib/store";
@@ -97,6 +98,7 @@ export default function App() {
   const [tab, setTab] = useState<PaneKey>("viewport");
   const [showLibrary, setShowLibrary] = useState(false);
   const [showColors, setShowColors] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -121,6 +123,9 @@ export default function App() {
       <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">
         ⊞ library
       </button>
+      <button className="lib-btn" onClick={() => setShowHelp(true)} title="build123d quick reference">
+        ? docs
+      </button>
       <HistoryControls />
     </header>
   );
@@ -129,6 +134,7 @@ export default function App() {
     <>
       {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
       {showColors && <EditorColorsModal onClose={() => setShowColors(false)} />}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </>
   );
 

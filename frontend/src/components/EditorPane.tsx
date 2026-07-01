@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import { useStore } from "../lib/store";
 import "../lib/monaco-setup";
+import { applyEditorTheme, loadEditorColors } from "../lib/editorTheme";
 
 interface InlineState {
   top: number;
@@ -55,6 +56,9 @@ export function EditorPane() {
   const onMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    // Re-apply any persisted editor theme now that the editor exists (avoids a
+    // load-order race where the theme is defined before Monaco is ready).
+    applyEditorTheme(loadEditorColors());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runNow());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => openInline());
     // Cursor line drives code->geometry highlighting (plan §6).

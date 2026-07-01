@@ -603,6 +603,20 @@ textarea {
   color: var(--accent);
   border-color: var(--accent);
 }
+.vp-btn.on {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.vp-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--sp-1) 0 var(--sp-2);
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 .vp-slider {
   width: 90px;
   accent-color: var(--accent);
@@ -995,6 +1009,26 @@ textarea {
   background: var(--bg-pane);
   overflow: hidden;
   box-shadow: var(--shadow-sm);
+}
+/* Pinned above the input: the diff scrolls inside a height-capped card so the
+   Accept / Preview / Reject actions are always visible. */
+.patch-pinned {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 55%;
+  margin: 0 var(--sp-2) var(--sp-2);
+}
+.patch-pinned .patch-rationale,
+.patch-pinned .patch-targets,
+.patch-pinned .patch-diffstats,
+.patch-pinned .patch-actions {
+  flex: 0 0 auto;
+}
+.patch-pinned .diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 .patch-rationale {
   padding: var(--sp-2) var(--sp-3);
@@ -1472,6 +1506,41 @@ textarea {
   border: none;
   border-radius: 3px;
 }
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.preset-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+.preset-btn:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.preset-swatches {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.preset-swatches span {
+  display: block;
+  width: 8px;
+  height: 12px;
+}
 .colors-actions {
   display: flex;
   justify-content: flex-end;
@@ -1621,6 +1690,64 @@ textarea {
   letter-spacing: 0.08em;
   color: var(--text-dim);
   padding: var(--sp-1) var(--sp-3) 2px;
+}
+
+/* ===== build123d help modal ===== */
+.modal-help {
+  width: min(680px, 94vw);
+  max-height: 86vh;
+}
+.help-intro {
+  margin: 0 0 var(--sp-4);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+.help-intro strong {
+  color: var(--accent);
+}
+.help-section {
+  margin-bottom: var(--sp-4);
+}
+.help-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: var(--sp-1);
+}
+.help-blurb {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: var(--sp-2);
+}
+.help-code {
+  margin: 0;
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+.help-links a {
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+.help-links a:hover {
+  text-decoration: underline;
 }
 
 /* ===== mobile layout: one pane at a time + bottom tab bar ===== */

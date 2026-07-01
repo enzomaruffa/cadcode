@@ -21,8 +21,12 @@ export function PrintabilityToggle() {
         <button className={viewMode === "printability" ? "on" : ""} onClick={() => setViewMode("printability")}>
           printability
         </button>
-        <button className={presentation ? "on" : ""} onClick={togglePresentation} title="Presentation (PBR) render">
-          ✨
+        <button
+          className={presentation ? "on" : ""}
+          onClick={togglePresentation}
+          title="Pretty render — PBR lighting, ambient occlusion & soft shadows (vs. flat technical shading)"
+        >
+          ✨ pretty
         </button>
       </div>
       {viewMode === "highlight" && (

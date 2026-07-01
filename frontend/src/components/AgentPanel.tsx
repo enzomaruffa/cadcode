@@ -37,7 +37,7 @@ export function AgentPanel() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [chat, pendingPatch, agentBusy]);
+  }, [chat, agentBusy]);
 
   const submit = () => {
     if (!draft.trim()) return;
@@ -62,38 +62,40 @@ export function AgentPanel() {
         ))}
 
         {agentBusy && <div className="msg msg-assistant agent-thinking">thinking…</div>}
-
-        {pendingPatch && (
-          <div className="patch-card">
-            <div className="patch-rationale">{pendingPatch.rationale}</div>
-            {pendingPatch.targets.length > 0 && (
-              <div className="patch-targets">
-                {pendingPatch.targets.map((t, i) => (
-                  <code key={i}>{t}</code>
-                ))}
-              </div>
-            )}
-            <DiffView diff={pendingPatch.diff} />
-            {diffStats && (
-              <div className="patch-diffstats">
-                geometry diff: <span className="d-add">+{diffStats.added}</span>{" "}
-                <span className="d-rem">−{diffStats.removed}</span> regions
-              </div>
-            )}
-            <div className="patch-actions">
-              <button className="btn btn-accept" onClick={acceptPatch}>
-                Accept
-              </button>
-              <button className="btn" onClick={previewDiff} title="Show the geometric consequence in 3D">
-                Preview 3D
-              </button>
-              <button className="btn btn-reject" onClick={rejectPatch}>
-                Reject
-              </button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Pending patch is pinned above the input so Accept/Reject are always
+          reachable (independent of the conversation scroll or Preview 3D). */}
+      {pendingPatch && (
+        <div className="patch-card patch-pinned">
+          <div className="patch-rationale">{pendingPatch.rationale}</div>
+          {pendingPatch.targets.length > 0 && (
+            <div className="patch-targets">
+              {pendingPatch.targets.map((t, i) => (
+                <code key={i}>{t}</code>
+              ))}
+            </div>
+          )}
+          <DiffView diff={pendingPatch.diff} />
+          {diffStats && (
+            <div className="patch-diffstats">
+              geometry diff: <span className="d-add">+{diffStats.added}</span>{" "}
+              <span className="d-rem">−{diffStats.removed}</span> regions
+            </div>
+          )}
+          <div className="patch-actions">
+            <button className="btn btn-accept" onClick={acceptPatch}>
+              Accept
+            </button>
+            <button className="btn" onClick={previewDiff} title="Show the geometric consequence in 3D">
+              Preview 3D
+            </button>
+            <button className="btn btn-reject" onClick={rejectPatch}>
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="agent-input">
         {selection?.selector && (

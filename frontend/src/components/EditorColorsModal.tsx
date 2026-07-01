@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   EDITOR_TOKENS,
+  EDITOR_PRESETS,
   DEFAULT_EDITOR_COLORS,
   loadEditorColors,
   saveEditorColors,
@@ -37,6 +38,22 @@ export function EditorColorsModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="modal-body">
+          <div className="menu-label">Preset themes</div>
+          <div className="preset-row">
+            {EDITOR_PRESETS.map((p) => (
+              <button key={p.key} className="preset-btn" onClick={() => apply({ ...p.colors })}>
+                <span className="preset-swatches">
+                  {["keyword", "string", "number", "type"].map((k) => (
+                    <span key={k} style={{ background: p.colors[k] }} />
+                  ))}
+                </span>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="menu-label" style={{ marginTop: "var(--sp-3)" }}>
+            Customize
+          </div>
           <div className="colors-list">
             {EDITOR_TOKENS.map((t) => (
               <label className="color-row" key={t.key}>

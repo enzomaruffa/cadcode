@@ -1,28 +1,134 @@
 import * as monaco from "monaco-editor";
 
-// User-configurable syntax token colors for the editor. The fixed editor chrome
-// (background, gutter, selection…) stays tied to the warm palette; only these
-// token hues are exposed for tweaking, persisted in localStorage, applied live.
+// The editor theme is fully configurable: pick a preset (Dracula, VS Code, …) or
+// tweak individual syntax token colors. Everything persists in localStorage and
+// applies to Monaco live. A theme = 7 syntax token colors + bg/cursor/selection.
 
 export interface EditorToken {
   key: string;
   label: string;
-  default: string;
 }
 
+// The individually-pickable syntax tokens (order = UI order).
 export const EDITOR_TOKENS: EditorToken[] = [
-  { key: "text", label: "Text & identifiers", default: "#ece7df" },
-  { key: "keyword", label: "Keywords", default: "#e0a44b" },
-  { key: "string", label: "Strings", default: "#9bbf80" },
-  { key: "comment", label: "Comments", default: "#7d7468" },
-  { key: "number", label: "Numbers", default: "#d98e73" },
-  { key: "type", label: "Types & classes", default: "#e8c98a" },
-  { key: "operator", label: "Operators & punctuation", default: "#b8ad9d" },
+  { key: "text", label: "Text & identifiers" },
+  { key: "keyword", label: "Keywords" },
+  { key: "string", label: "Strings" },
+  { key: "comment", label: "Comments" },
+  { key: "number", label: "Numbers" },
+  { key: "type", label: "Types & classes" },
+  { key: "operator", label: "Operators & punctuation" },
 ];
 
 export type EditorColors = Record<string, string>;
 
-export const DEFAULT_EDITOR_COLORS: EditorColors = Object.fromEntries(EDITOR_TOKENS.map((t) => [t.key, t.default]));
+export interface EditorPreset {
+  key: string;
+  label: string;
+  colors: EditorColors;
+}
+
+// Curated presets — the warm `cadcode` default plus popular editor themes.
+export const EDITOR_PRESETS: EditorPreset[] = [
+  {
+    key: "cadcode",
+    label: "cadcode (warm)",
+    colors: {
+      text: "#ece7df",
+      keyword: "#e0a44b",
+      string: "#9bbf80",
+      comment: "#7d7468",
+      number: "#d98e73",
+      type: "#e8c98a",
+      operator: "#b8ad9d",
+      bg: "#080706",
+      cursor: "#d8a657",
+      selection: "#3a2f1a",
+    },
+  },
+  {
+    key: "dracula",
+    label: "Dracula",
+    colors: {
+      text: "#f8f8f2",
+      keyword: "#ff79c6",
+      string: "#f1fa8c",
+      comment: "#6272a4",
+      number: "#bd93f9",
+      type: "#8be9fd",
+      operator: "#ff79c6",
+      bg: "#282a36",
+      cursor: "#f8f8f0",
+      selection: "#44475a",
+    },
+  },
+  {
+    key: "vscode",
+    label: "VS Code Dark+",
+    colors: {
+      text: "#d4d4d4",
+      keyword: "#569cd6",
+      string: "#ce9178",
+      comment: "#6a9955",
+      number: "#b5cea8",
+      type: "#4ec9b0",
+      operator: "#d4d4d4",
+      bg: "#1e1e1e",
+      cursor: "#aeafad",
+      selection: "#264f78",
+    },
+  },
+  {
+    key: "monokai",
+    label: "Monokai",
+    colors: {
+      text: "#f8f8f2",
+      keyword: "#f92672",
+      string: "#e6db74",
+      comment: "#75715e",
+      number: "#ae81ff",
+      type: "#66d9ef",
+      operator: "#f92672",
+      bg: "#272822",
+      cursor: "#f8f8f0",
+      selection: "#49483e",
+    },
+  },
+  {
+    key: "solarized",
+    label: "Solarized Dark",
+    colors: {
+      text: "#93a1a1",
+      keyword: "#859900",
+      string: "#2aa198",
+      comment: "#586e75",
+      number: "#d33682",
+      type: "#b58900",
+      operator: "#859900",
+      bg: "#002b36",
+      cursor: "#93a1a1",
+      selection: "#073642",
+    },
+  },
+  {
+    key: "github",
+    label: "GitHub Dark",
+    colors: {
+      text: "#c9d1d9",
+      keyword: "#ff7b72",
+      string: "#a5d6ff",
+      comment: "#8b949e",
+      number: "#79c0ff",
+      type: "#ffa657",
+      operator: "#ff7b72",
+      bg: "#0d1117",
+      cursor: "#c9d1d9",
+      selection: "#264466",
+    },
+  },
+];
+
+export const DEFAULT_EDITOR_COLORS: EditorColors = { ...EDITOR_PRESETS[0].colors };
 
 const STORAGE_KEY = "cadcode.editorColors";
 
@@ -67,39 +173,38 @@ function buildTheme(c: EditorColors): monaco.editor.IStandaloneThemeData {
       { token: "tag", foreground: hex(c.keyword) },
       { token: "attribute.name", foreground: hex(c.type) },
     ],
+    // Chrome derives from the preset so each theme reads coherently.
     colors: {
-      "editor.background": "#080706",
-      "editor.foreground": "#ece7df",
-      "editorLineNumber.foreground": "#544d43",
-      "editorLineNumber.activeForeground": "#a59c90",
-      "editor.lineHighlightBackground": "#15120c",
+      "editor.background": c.bg,
+      "editor.foreground": c.text,
+      "editorLineNumber.foreground": `${c.comment}aa`,
+      "editorLineNumber.activeForeground": c.text,
+      "editor.lineHighlightBackground": `${c.selection}55`,
       "editor.lineHighlightBorder": "#00000000",
-      "editor.selectionBackground": "#3a2f1a",
-      "editor.inactiveSelectionBackground": "#241d12",
-      "editor.selectionHighlightBackground": "#2a2216",
-      "editorCursor.foreground": "#d8a657",
-      "editor.findMatchBackground": "#5a4420",
-      "editor.findMatchHighlightBackground": "#3a2f1a",
-      "editorIndentGuide.background1": "#1e1b16",
-      "editorIndentGuide.activeBackground1": "#2f2a20",
-      "editorWhitespace.foreground": "#2a2620",
-      "editorGutter.background": "#080706",
+      "editor.selectionBackground": c.selection,
+      "editor.inactiveSelectionBackground": `${c.selection}99`,
+      "editor.selectionHighlightBackground": `${c.selection}77`,
+      "editorCursor.foreground": c.cursor,
+      "editorIndentGuide.background1": `${c.comment}33`,
+      "editorIndentGuide.activeBackground1": `${c.comment}66`,
+      "editorWhitespace.foreground": `${c.comment}44`,
+      "editorGutter.background": c.bg,
       "editorError.foreground": "#e0775e",
       "editorWarning.foreground": "#e0a44b",
-      "editorBracketMatch.background": "#241d12",
-      "editorBracketMatch.border": "#d8a65766",
-      "scrollbarSlider.background": "#3a342a66",
-      "scrollbarSlider.hoverBackground": "#3a342aaa",
-      "scrollbarSlider.activeBackground": "#d8a65799",
-      "editorWidget.background": "#17150f",
-      "editorWidget.border": "#2a2620",
-      "editorSuggestWidget.background": "#17150f",
-      "editorSuggestWidget.border": "#2a2620",
-      "editorSuggestWidget.selectedBackground": "#211d16",
-      "editorHoverWidget.background": "#17150f",
-      "editorHoverWidget.border": "#2a2620",
-      "input.background": "#080706",
-      focusBorder: "#d8a657",
+      "editorBracketMatch.background": `${c.selection}88`,
+      "editorBracketMatch.border": `${c.cursor}88`,
+      "scrollbarSlider.background": `${c.text}22`,
+      "scrollbarSlider.hoverBackground": `${c.text}44`,
+      "scrollbarSlider.activeBackground": `${c.cursor}88`,
+      "editorWidget.background": c.bg,
+      "editorWidget.border": `${c.text}20`,
+      "editorSuggestWidget.background": c.bg,
+      "editorSuggestWidget.border": `${c.text}20`,
+      "editorSuggestWidget.selectedBackground": c.selection,
+      "editorHoverWidget.background": c.bg,
+      "editorHoverWidget.border": `${c.text}20`,
+      "input.background": c.bg,
+      focusBorder: c.cursor,
     },
   };
 }
