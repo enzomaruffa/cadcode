@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -151,21 +152,72 @@ async def library_geometry(name: str) -> dict:
 
 @app.get("/library")
 async def library() -> dict[str, list]:
-    """The parts catalog for the palette: signatures, docs, params + an
-    isometric wireframe thumbnail per part (plan §5)."""
+    """The parts catalog for the palette: signatures, docs, params. Previews are
+    rendered live in the frontend via @cadcode/viewer (see the geometry route)."""
     from app.library import catalog
-    from app.thumbnail import iso_svg
 
-    parts = catalog()
-    for entry in parts:
+    return {"parts": catalog()}
+
+
+_TOKEN_RE = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)\s*(?:#\s*(.*?))?\s*$")
+
+
+def _design_path() -> Path:
+    import lib.design
+
+    return Path(lib.design.__file__)
+
+
+@app.get("/design")
+async def get_design() -> dict:
+    """Shared design tokens (lib/design.py) — name, value, and doc comment — so
+    the UI can show what's importable and let you tune them."""
+    tokens = []
+    try:
+        for line in _design_path().read_text().splitlines():
+            m = _TOKEN_RE.match(line)
+            if m:
+                tokens.append({"name": m.group(1), "value": float(m.group(2)), "comment": (m.group(3) or "").strip()})
+    except Exception as exc:  # noqa: BLE001
+        return {"tokens": [], "error": str(exc)}
+    return {"tokens": tokens}
+
+
+@app.post("/design")
+async def set_design(payload: dict) -> dict:
+    """Write new design-token values into lib/design.py and recycle the kernel so
+    the next run (and every part) re-derives with them."""
+    updates = payload.get("updates")
+    if not isinstance(updates, dict) or not updates:
+        return {"ok": False, "error": "no updates"}
+    path = _design_path()
+    try:
+        lines = path.read_text().splitlines()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+    changed = False
+    for i, line in enumerate(lines):
+        m = _TOKEN_RE.match(line)
+        if not m or m.group(1) not in updates:
+            continue
+        name, comment = m.group(1), (m.group(3) or "").strip()
         try:
-            from lib import parts as _parts
+            val = float(updates[name])
+        except (TypeError, ValueError):
+            continue
+        newline = f"{name} = {val}" + (f"  # {comment}" if comment else "")
+        if newline != line:
+            lines[i] = newline
+            changed = True
 
-            fn = getattr(_parts, entry["name"], None)
-            entry["thumbnail"] = iso_svg(fn()) if fn else ""
-        except Exception:
-            entry["thumbnail"] = ""
-    return {"parts": parts}
+    if changed:
+        path.write_text("\n".join(lines) + "\n")
+        kernel = getattr(app.state, "kernel", None)
+        reload = getattr(kernel, "reload_design", None)
+        if reload is not None:
+            await reload()
+    return {"ok": True, "changed": changed}
 
 
 @app.websocket("/ws")

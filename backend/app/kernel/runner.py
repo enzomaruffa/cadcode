@@ -29,25 +29,53 @@ SOURCE_FILENAME = "<cad-source>"
 # live OCP topology without re-running. Lives in whatever process ran the
 # script (the worker), since OCP objects don't cross the process boundary.
 LAST_SHOWN: dict[str, Any] = {}
+# The resolved material (density / cost / filament) per shown leaf, populated in
+# lockstep with LAST_SHOWN so a follow-up `physical` op can weigh each part.
+LAST_MATERIAL: dict[str, dict[str, Any]] = {}
+
+
+def _resolve_material(material: Any = None, density: Any = None) -> dict[str, Any]:
+    """Normalize a ``show(..., material=..., density=...)`` argument to a plain
+    dict ``{name, density (g/cm³), cost_per_kg, filament_d}``. Accepts a
+    ``lib.design.Material``, a preset name string, a bare density float, or
+    nothing (→ the default material). Kept JSON-friendly so it crosses the
+    worker boundary and never couples callers to the Material class."""
+    from lib.design import DEFAULT_MATERIAL, MATERIALS, Material
+
+    m = DEFAULT_MATERIAL
+    if isinstance(material, Material):
+        m = material
+    elif isinstance(material, str) and material.upper() in MATERIALS:
+        m = MATERIALS[material.upper()]
+    elif isinstance(material, (int, float)) and not isinstance(material, bool) and material > 0:
+        m = Material("custom", float(material), DEFAULT_MATERIAL.cost_per_kg, DEFAULT_MATERIAL.filament_d)
+    elif isinstance(density, (int, float)) and not isinstance(density, bool) and density > 0:
+        m = Material("custom", float(density), DEFAULT_MATERIAL.cost_per_kg, DEFAULT_MATERIAL.filament_d)
+    return {"name": m.name, "density": m.density, "cost_per_kg": m.cost_per_kg, "filament_d": m.filament_d}
 
 
 def _make_namespace(
     builtins_override: Any = None,
-) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any]], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any, dict[str, Any]]], list[dict[str, Any]]]:
     """Build the exec globals, including the ``show`` collectors and the
     ``require`` spec collector (CAD-as-TDD, plan §7)."""
-    shown: list[tuple[Any, str | None, Any]] = []
+    shown: list[tuple[Any, str | None, Any, dict[str, Any]]] = []
     specs: list[dict[str, Any]] = []
 
-    def show(*objs: Any, name: str | None = None, color: Any = None, **_kw: Any) -> Any:
+    def show(
+        *objs: Any, name: str | None = None, color: Any = None, material: Any = None, density: Any = None, **_kw: Any
+    ) -> Any:
+        mat = _resolve_material(material, density)
         for i, obj in enumerate(objs):
             nm = name if (name and len(objs) == 1) else (f"{name}_{i}" if name else None)
-            shown.append((obj, nm, color))
+            shown.append((obj, nm, color, mat))
         return objs[0] if len(objs) == 1 else objs
 
     def show_object(obj: Any, name: str | None = None, options: dict | None = None, **_kw: Any) -> Any:
-        color = (options or {}).get("color") if options else None
-        shown.append((obj, name, color))
+        opts = options or {}
+        color = opts.get("color") if opts else None
+        mat = _resolve_material(opts.get("material"), opts.get("density"))
+        shown.append((obj, name, color, mat))
         return obj
 
     def require(condition: Any, message: str = "") -> bool:
@@ -83,15 +111,16 @@ def _is_renderable(obj: Any) -> bool:
     )
 
 
-def _auto_collect(ns: dict[str, Any]) -> list[tuple[Any, str | None, Any]]:
+def _auto_collect(ns: dict[str, Any]) -> list[tuple[Any, str | None, Any, dict[str, Any]]]:
     """Fallback: render every top-level build123d shape the script defined."""
-    collected: list[tuple[Any, str | None, Any]] = []
+    default_mat = _resolve_material()
+    collected: list[tuple[Any, str | None, Any, dict[str, Any]]] = []
     for name, obj in ns.items():
         if name.startswith("_") or name in ("show", "show_object", "bd"):
             continue
         try:
             if _is_renderable(obj):
-                collected.append((obj, name, None))
+                collected.append((obj, name, None, default_mat))
         except Exception:
             continue
     return collected
@@ -129,7 +158,51 @@ def run_objects(source: str, *, sandbox: bool = False) -> tuple[list[Any], str |
     except BaseException as exc:  # noqa: BLE001
         return [], f"{type(exc).__name__}: {exc}"
     objects = shown or _auto_collect(ns)
-    return [o for (o, _n, _c) in objects], None
+    return [o for (o, _n, _c, _m) in objects], None
+
+
+def run_scene(
+    source: str, *, sandbox: bool = False, inject: dict[str, Any] | None = None
+) -> tuple[list[Any], list[str | None], list[str], dict[str, Any], list[dict[str, Any]], str | None]:
+    """Exec ``source`` and hand back everything a motion sim needs that
+    ``run_source`` throws away: the live namespace (to find a ``motion(t)``
+    function), the shown objects + their names + tessellation leaf ids (to key
+    per-part transforms), and the ``require`` specs.
+
+    ``inject`` seeds extra globals before exec — used to feed
+    ``min_clearance_through_motion`` back into the script for its clearance spec.
+
+    Returns ``(objs, names, leaf_ids, ns, specs, error)``."""
+    builtins_override = None
+    if sandbox:
+        from app.kernel.sandbox import SandboxError, check_imports, safe_builtins
+
+        try:
+            check_imports(source)
+        except SandboxError as exc:
+            return [], [], [], {}, [], f"SandboxError: {exc}"
+        builtins_override = safe_builtins()
+
+    ns, shown, specs = _make_namespace(builtins_override)
+    if inject:
+        ns.update(inject)
+    try:
+        code = compile(source, SOURCE_FILENAME, "exec")
+        with redirect_stdout(io.StringIO()):
+            exec(code, ns)
+    except BaseException as exc:  # noqa: BLE001
+        return [], [], [], ns, specs, f"{type(exc).__name__}: {exc}"
+
+    objects = shown or _auto_collect(ns)
+    objs = [o for (o, _n, _c, _m) in objects]
+    names = [n for (_o, n, _c, _m) in objects]
+    if not objs:
+        return [], [], [], ns, specs, None
+    try:
+        _shapes, states, _bbox = tessellate(objs, names=names)
+    except Exception as exc:  # noqa: BLE001
+        return objs, names, [], ns, specs, f"Tessellation failed: {exc}"
+    return objs, names, list(states.keys()), ns, specs, None
 
 
 def run_source(source: str, *, sandbox: bool = False) -> RunResult:
@@ -163,20 +236,24 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     if not objects:
         return RunResult.success({}, {}, None, stdout=buf.getvalue(), specs=specs)
 
-    objs = [o for (o, _n, _c) in objects]
-    names = [n for (_o, n, _c) in objects]
-    colors = [c for (_o, _n, c) in objects]
+    objs = [o for (o, _n, _c, _m) in objects]
+    names = [n for (_o, n, _c, _m) in objects]
+    colors = [c for (_o, _n, c, _m) in objects]
+    materials = [m for (_o, _n, _c, m) in objects]
     try:
         shapes, states, bbox = tessellate(objs, names=names, colors=colors)
     except Exception as exc:  # noqa: BLE001
         full = "".join(tb_mod.format_exception(type(exc), exc, exc.__traceback__))
         return RunResult.failure(f"Tessellation failed: {exc}", traceback=_clean_traceback(full), stdout=buf.getvalue())
 
-    # Cache objects by leaf id (states keys are leaf ids in tessellation order)
-    # so a follow-up select can resolve a pick against the live topology.
+    # Cache objects (and their materials) by leaf id (states keys are leaf ids in
+    # tessellation order) so a follow-up select / physical op can resolve against
+    # the live topology.
     LAST_SHOWN.clear()
-    for leaf_id, obj in zip(states.keys(), objs, strict=False):
+    LAST_MATERIAL.clear()
+    for leaf_id, obj, mat in zip(states.keys(), objs, materials, strict=False):
         LAST_SHOWN[leaf_id] = obj
+        LAST_MATERIAL[leaf_id] = mat
 
     return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs)
 

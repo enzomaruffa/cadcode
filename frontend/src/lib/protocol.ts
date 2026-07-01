@@ -71,6 +71,30 @@ export interface Param {
   step?: number;
 }
 
+// Physical-properties readout (backend app/kernel/massprops.py).
+export interface PhysicalPayload {
+  mass_g: number;
+  volume_cm3: number;
+  area_mm2: number;
+  com: [number, number, number];
+  inertia: number[][];
+  principal: number[];
+  principal_axes: number[][];
+  base_z: number;
+  com_height: number;
+  footprint: [number, number][];
+  tip_angle: number | null;
+  stable: boolean;
+  floats: boolean;
+  effective_density: number;
+  filament_g: number;
+  filament_len_mm: number | null;
+  cost: number;
+  print_time_min: number;
+  material_name: string;
+  parts: number;
+}
+
 export interface GeometryPayload {
   shapes: TessShapes;
   states: Record<string, number[]>;
@@ -80,11 +104,12 @@ export interface GeometryPayload {
   params: Param[];
   stdout: string;
   stale: boolean;
-  mode?: "technical" | "printability" | "highlight" | "geomdiff";
+  mode?: "technical" | "printability" | "highlight" | "geomdiff" | "physical";
   print_stats?: Record<string, number | string> | null;
+  physical?: PhysicalPayload | null;
 }
 
-export type ViewMode = "technical" | "printability" | "highlight";
+export type ViewMode = "technical" | "printability" | "highlight" | "physical";
 
 export interface ErrorPayload {
   message: string;

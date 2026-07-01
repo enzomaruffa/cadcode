@@ -108,6 +108,13 @@ class SubprocessKernel:
             return {"error": data.error}
         return data
 
+    async def physical(self) -> dict:
+        async with self._lock:
+            data = await asyncio.to_thread(self._request, {"op": "physical"}, self._read_timeout)
+        if isinstance(data, RunResult):
+            return {"error": data.error}
+        return data
+
     async def provenance(self, source: str, active_line: int | None = None) -> dict:
         async with self._lock:
             data = await asyncio.to_thread(
@@ -158,6 +165,17 @@ class SubprocessKernel:
             except Exception as exc:  # noqa: BLE001
                 self._kill()
                 return RunResult.failure(f"bad kernel response: {exc}")
+
+    async def reload_design(self) -> dict:
+        """Recycle the worker so shared modules (lib.design + lib.parts) are
+        re-imported fresh on the next run — picking up edited design tokens."""
+        async with self._lock:
+            await asyncio.to_thread(self._kill_sync)
+        return {"ok": True}
+
+    def _kill_sync(self) -> None:
+        with self._proc_lock:
+            self._kill()
 
     async def close(self) -> None:
         with self._proc_lock:

@@ -4,8 +4,8 @@ import { HTTP_URL } from "../config";
 
 // A standalone, orbitable mini renderer for one library part. Non-interactive
 // (no picking/section/measure) — just a pretty preview. Keyed by name so each
-// part gets a fresh camera fit.
-export function PartPreview({ name }: { name: string }) {
+// part gets a fresh camera fit. Used both for the grid cards and the detail view.
+export function PartPreview({ name, className = "part-preview" }: { name: string; className?: string }) {
   const [data, setData] = useState<{ name: string; shapes: TessShapes } | null>(null);
 
   useEffect(() => {
@@ -27,7 +27,7 @@ export function PartPreview({ name }: { name: string }) {
   return (
     <CadCanvas
       key={name}
-      className="part-preview"
+      className={className}
       shapes={shapes}
       geometryRev={shapes ? 1 : 0}
       renderProfile="presentation"

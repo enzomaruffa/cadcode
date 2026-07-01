@@ -150,6 +150,22 @@ class Session:
             await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
             return
 
+        if mode == "physical":
+            result = await self.kernel.physical()
+            if "error" in result:
+                await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+                return
+            # No geometry: physical mode keeps the technical shading on screen and
+            # only adds the COM / footprint overlay. shapes stays empty so the
+            # frontend never blanks the model.
+            await self.send(
+                P.GEOMETRY,
+                P.GeometryPayload(shapes={}, states={}, mode="physical", physical=result.get("physical")).model_dump(),
+                env.id,
+            )
+            await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+            return
+
         if mode == "highlight":
             result = await self.kernel.provenance(self.doc.source)
             if "error" in result:

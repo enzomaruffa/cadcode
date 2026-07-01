@@ -32,6 +32,7 @@ import {
   type HistoryPayload,
   type MeasurementPayload,
   type Param,
+  type PhysicalPayload,
   type SelectKind,
   type Spec,
   type StatusPayload,
@@ -90,6 +91,7 @@ interface StoreState {
   viewMode: ViewMode;
   buildAxis: "Z" | "X" | "Y";
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
+  physical: PhysicalPayload | null;
   activeLine: number | null; // editor cursor line (drives highlight glow)
   revealLine: number | null; // line to reveal in the editor (from a face click)
   presentation: boolean; // technical (false) vs presentation/PBR (true) render
@@ -158,6 +160,7 @@ export const useStore = create<StoreState>()(
       viewMode: "technical",
       buildAxis: "Z",
       printStats: null,
+      physical: null,
       activeLine: null,
       revealLine: null,
       presentation: false,
@@ -212,6 +215,13 @@ export const useStore = create<StoreState>()(
             case GEOMETRY: {
               const p = env.payload as unknown as GeometryPayload;
               const incomingMode = p.mode ?? "technical";
+              // Physical mode carries no geometry — only the readout. Update just
+              // `physical` and leave shapes/geometryRev untouched so the model
+              // stays on screen (the overlay draws on top of technical shading).
+              if (incomingMode === "physical") {
+                set({ physical: (p.physical as PhysicalPayload | null) ?? null });
+                break;
+              }
               set((s) => ({
                 shapes: p.shapes,
                 geometryRev: s.geometryRev + 1,
@@ -235,6 +245,9 @@ export const useStore = create<StoreState>()(
                 send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
               } else if (vm === "highlight" && incomingMode === "technical") {
                 send(SET_MODE, { mode: "highlight" });
+              } else if (vm === "physical" && incomingMode === "technical") {
+                // Re-derive the readout on every edit while physical mode is open.
+                send(SET_MODE, { mode: "physical" });
               }
               break;
             }
@@ -341,6 +354,7 @@ export const useStore = create<StoreState>()(
         set({ viewMode: mode });
         if (mode === "printability") send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
         else if (mode === "highlight") send(SET_MODE, { mode: "highlight" });
+        else if (mode === "physical") send(SET_MODE, { mode: "physical" });
         else {
           set({ printStats: null });
           send(SET_MODE, { mode: "technical" });
@@ -360,8 +374,10 @@ export const useStore = create<StoreState>()(
         const lines = get().source.split("\n");
         const idx = line - 1;
         if (idx < 0 || idx >= lines.length) return;
-        // Replace the number after `NAME =` on that line, preserving the rest.
-        const re = new RegExp(`^(\\s*${name}\\s*=\\s*)(-?\\d+(?:\\.\\d+)?)(.*)$`);
+        // Replace the number after the assignment `=`, tolerating a type annotation
+        // in between (e.g. `WIDTH: Annotated[float, Range(20, 160)] = 80`). The lazy
+        // `.*?` stops at the first `=`, which is the assignment (Range() has no `=`).
+        const re = new RegExp(`^(\\s*${name}\\b.*?=\\s*)(-?\\d+(?:\\.\\d+)?)(.*)$`);
         const replaced = lines[idx].replace(re, (_m, pre, _num, rest) => `${pre}${value}${rest}`);
         if (replaced === lines[idx]) return; // no match — bail rather than corrupt
         lines[idx] = replaced;

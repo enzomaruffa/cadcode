@@ -19,6 +19,7 @@ class Kernel(Protocol):
     async def run(self, source: str) -> RunResult: ...
     async def measure_selection(self, kind: str, shape_id: str, index: int) -> dict: ...
     async def printability(self, build_axis: str = "Z") -> dict: ...
+    async def physical(self) -> dict: ...
     async def provenance(self, source: str, active_line: int | None = None) -> dict: ...
     async def geomdiff(self, old_source: str, new_source: str) -> dict: ...
     async def close(self) -> None: ...
@@ -50,6 +51,24 @@ class InProcessKernel:
         def _go() -> dict:
             shapes, states, bbox, stats = printability_shapes(objs, build_axis=build_axis)
             return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
+
+        return await asyncio.to_thread(_go)
+
+    async def physical(self) -> dict:
+        from app.kernel import runner
+        from app.kernel.massprops import mass_properties
+
+        ids = list(runner.LAST_SHOWN.keys())
+        if not ids:
+            return {"error": "no geometry yet (run first)"}
+        objs = [runner.LAST_SHOWN[i] for i in ids]
+        materials = [runner.LAST_MATERIAL.get(i, {}) for i in ids]
+
+        def _go() -> dict:
+            result = mass_properties(objs, materials)
+            if "error" in result:
+                return result
+            return {"ok": True, "physical": result}
 
         return await asyncio.to_thread(_go)
 

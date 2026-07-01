@@ -2,10 +2,16 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { CadViewer, type InteractionMode } from "../core/CadViewer";
 import { TECHNICAL, PRESENTATION } from "../materials/materials";
 import type { SectionAxis } from "../interaction/Section";
+import type { PhysicalData } from "../interaction/PhysicalOverlay";
 import type { NotifyChange, PickEvent, RenderPreset, TessShapes, ViewerOptions } from "../core/types";
 
 export type RenderProfile = "technical" | "presentation";
-export type ViewMode = "technical" | "printability" | "highlight" | "geomdiff";
+export type ViewMode = "technical" | "printability" | "highlight" | "geomdiff" | "physical" | "motion";
+
+// Modes that recolor / re-tessellate the mesh — they force the flat technical
+// preset so AO and tone mapping never distort the exact backend colors. Physical
+// and motion annotate/animate on top of normal shading, so they're excluded.
+const RECOLOR_MODES = new Set<ViewMode>(["printability", "highlight", "geomdiff"]);
 
 export interface CadCanvasProps {
   shapes: TessShapes | null;
@@ -14,6 +20,7 @@ export interface CadCanvasProps {
   viewMode?: ViewMode;
   activeLine?: number | null;
   highlight?: { faceLines?: number[] } | null;
+  physical?: PhysicalData | null;
   mode?: "select" | "section" | "measure";
   selectTopo?: "any" | "face" | "edge" | "vertex";
   interactive?: boolean;
@@ -36,7 +43,8 @@ const presetFor = (p: RenderProfile | undefined): RenderPreset => (p === "presen
 
 function sizeOf(el: HTMLElement) {
   const r = el.getBoundingClientRect();
-  return { width: Math.max(Math.floor(r.width), 320), height: Math.max(Math.floor(r.height), 240) };
+  // Small floor so the renderer fits inside library grid cards, not just full panes.
+  return { width: Math.max(Math.floor(r.width), 64), height: Math.max(Math.floor(r.height), 64) };
 }
 
 // Create-once / render-many React wrapper around CadViewer. Store-agnostic: it
@@ -103,14 +111,15 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     viewerRef.current?.setSelectTopo(props.selectTopo ?? "face");
   }, [props.selectTopo]);
 
-  // Re-render when geometry or look changes. Diagnostic view modes
+  // Re-render when geometry or look changes. Recolor view modes
   // (printability/highlight/geomdiff) force the flat preset so AO and tone
-  // mapping never distort the exact backend colors.
+  // mapping never distort the exact backend colors; physical/motion keep the
+  // normal render profile since they annotate/animate on top of it.
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !props.shapes || !props.shapes.parts?.length) return;
-    const diagnostic = props.viewMode != null && props.viewMode !== "technical";
-    viewer.render(props.shapes, diagnostic ? TECHNICAL : presetFor(props.renderProfile));
+    const recolor = props.viewMode != null && RECOLOR_MODES.has(props.viewMode);
+    viewer.render(props.shapes, recolor ? TECHNICAL : presetFor(props.renderProfile));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.geometryRev, props.renderProfile, props.viewMode, props.shapes]);
 
@@ -119,6 +128,13 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     if (props.viewMode === "highlight") viewerRef.current?.recolorHighlight(props.activeLine ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.activeLine, props.viewMode, props.geometryRev]);
+
+  // Physical mode: draw the COM / support-polygon overlay (no rebuild). Cleared
+  // whenever we leave the mode or the readout goes away.
+  useEffect(() => {
+    viewerRef.current?.setPhysical(props.viewMode === "physical" ? (props.physical ?? null) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.physical, props.viewMode, props.geometryRev]);
 
   return <div ref={containerRef} className={props.className ?? "viewport"} />;
 });

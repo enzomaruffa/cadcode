@@ -7,7 +7,6 @@ interface CatalogPart {
   name: string;
   signature: string;
   doc: string;
-  thumbnail: string;
   import: string;
 }
 
@@ -96,7 +95,7 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
               <div className="lib-grid">
                 {filtered.map((p) => (
                   <button key={p.name} className="lib-card" onClick={() => setSelected(p)} title="Click to preview">
-                    <div className="lib-thumb" dangerouslySetInnerHTML={{ __html: p.thumbnail }} />
+                    <PartPreview name={p.name} className="lib-thumb" />
                     <div className="lib-meta">
                       <div className="lib-name">{p.name}</div>
                       <div className="lib-doc">{(p.doc || "").split("\n")[0]}</div>

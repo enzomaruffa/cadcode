@@ -121,7 +121,7 @@ def run_with_provenance(source: str, sandbox: bool = True) -> dict[str, Any]:
 
     face_lines: list[int] = []
     faces: list[Any] = []
-    for obj, _name, _color in objects:
+    for obj, _name, _color, _material in objects:
         w = obj.wrapped if hasattr(obj, "wrapped") else obj
         for topo in C.get_faces(w):
             face = Face(topo)

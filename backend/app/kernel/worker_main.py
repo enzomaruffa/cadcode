@@ -57,6 +57,10 @@ def main() -> None:
             write_frame(stdout, json.dumps(_handle_printability(req)).encode())
             continue
 
+        if op == "physical":
+            write_frame(stdout, json.dumps(_handle_physical(req)).encode())
+            continue
+
         if op == "provenance":
             write_frame(stdout, json.dumps(_handle_provenance(req)).encode())
             continue
@@ -111,6 +115,25 @@ def _handle_printability(req: dict) -> dict:
     try:
         shapes, states, bbox, stats = printability_shapes(objs, build_axis=req.get("build_axis", "Z"))
         return {"ok": True, "shapes": shapes, "states": states, "bbox": bbox, "stats": stats}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _handle_physical(req: dict) -> dict:
+    """Compute the physical-properties readout for the last run's solids."""
+    from app.kernel import runner
+    from app.kernel.massprops import mass_properties
+
+    ids = list(runner.LAST_SHOWN.keys())
+    if not ids:
+        return {"error": "no geometry yet (run first)"}
+    objs = [runner.LAST_SHOWN[i] for i in ids]
+    materials = [runner.LAST_MATERIAL.get(i, {}) for i in ids]
+    try:
+        result = mass_properties(objs, materials)
+        if "error" in result:
+            return result
+        return {"ok": True, "physical": result}
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
 

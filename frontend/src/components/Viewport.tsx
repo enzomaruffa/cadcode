@@ -19,6 +19,7 @@ export function Viewport() {
   const viewMode = useStore((s) => s.viewMode);
   const activeLine = useStore((s) => s.activeLine);
   const presentation = useStore((s) => s.presentation);
+  const physical = useStore((s) => s.physical);
 
   const onPick = (p: PickEvent) => {
     const st = useStore.getState();
@@ -49,6 +50,7 @@ export function Viewport() {
         renderProfile={presentation ? "presentation" : "technical"}
         viewMode={viewMode}
         activeLine={activeLine}
+        physical={physical}
         onPick={onPick}
       />
       <div className="vp-toolbar">

@@ -112,9 +112,12 @@ class GeometryPayload(BaseModel):
     stdout: str = ""
     # whether this geometry is the last *good* render kept after an error
     stale: bool = False
-    # "technical" (normal) or "printability" (overhang heatmap)
+    # "technical" (normal), "printability" (overhang heatmap), "highlight",
+    # "geomdiff", or "physical" (mass/COM readout — carries `physical`, not shapes)
     mode: str = "technical"
     print_stats: dict[str, Any] | None = None
+    # physical-properties readout (mass, com, inertia, tip, cost) for mode="physical"
+    physical: dict[str, Any] | None = None
 
 
 class ErrorPayload(BaseModel):

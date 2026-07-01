@@ -16,6 +16,7 @@ import { InteractionController, type SelectTopo } from "../interaction/Interacti
 import { SelectionHighlight } from "../interaction/SelectionHighlight";
 import { Section, type SectionAxis } from "../interaction/Section";
 import { Measure } from "../interaction/Measure";
+import { PhysicalOverlay, type PhysicalData } from "../interaction/PhysicalOverlay";
 
 export type InteractionMode = "select" | "measure";
 
@@ -43,6 +44,7 @@ export class CadViewer {
   private selection: SelectionHighlight;
   private section: Section;
   private measure: Measure;
+  private physical: PhysicalOverlay;
   private grid: Grid;
   private gizmo: Gizmo;
   private mode: InteractionMode = "select";
@@ -83,6 +85,7 @@ export class CadViewer {
     this.selection = new SelectionHighlight(this.scene, this.resolution);
     this.section = new Section(this.scene);
     this.measure = new Measure(this.scene, container);
+    this.physical = new PhysicalOverlay(this.scene, container);
     this.grid = new Grid(this.scene);
     this.gizmo = new Gizmo();
 
@@ -187,6 +190,7 @@ export class CadViewer {
     if (this.preset.aoEnabled) this.post.render();
     else this.renderer.render(this.scene, this.rig.camera);
     this.measure.render(this.scene, this.rig.camera);
+    this.physical.render(this.scene, this.rig.camera);
     this.gizmo.render(this.renderer, this.rig.camera);
   }
 
@@ -244,6 +248,7 @@ export class CadViewer {
     this.resolution.set(width * dpr, height * dpr);
     this.post?.setSize(width, height);
     this.measure?.setSize(width, height);
+    this.physical?.setSize(width, height);
     if (this.sceneGraph) {
       for (const mat of this.sceneGraph.lineMaterials) (mat as LineMaterial).resolution.copy(this.resolution);
     }
@@ -297,6 +302,13 @@ export class CadViewer {
     }
   }
 
+  /** Physical-properties overlay (COM marker + support polygon), or null to clear. */
+  setPhysical(data: PhysicalData | null): void {
+    if (data) this.physical.set(data);
+    else this.physical.clear();
+    this.requestRender();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -309,6 +321,7 @@ export class CadViewer {
     this.selection.dispose();
     this.section.dispose();
     this.measure.dispose();
+    this.physical.dispose();
     this.grid.dispose();
     this.gizmo.dispose();
     this.post.dispose();
