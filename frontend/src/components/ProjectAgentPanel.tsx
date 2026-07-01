@@ -16,6 +16,14 @@ interface ProjectPatch {
   error?: string;
 }
 
+// A project-relative path -> the {kind, name} an open tab is keyed by.
+function pathToTarget(path: string): { kind: string; name: string } {
+  if (path === "project.py") return { kind: "project", name: "" };
+  const m = /^(parts|scenes)\/(.+)\.py$/.exec(path);
+  if (m) return { kind: m[1] === "parts" ? "part" : "scene", name: m[2] };
+  return { kind: "part", name: path.replace(/\.py$/, "") };
+}
+
 // The whole-project multi-file agent (PROJECTS_PLAN.md). It edits many files at
 // once — a part and the scenes/parts that use it — and shows the result as a
 // per-file diff you accept as one atomic patch. Accepting writes every file and
@@ -24,6 +32,7 @@ export function ProjectAgentPanel() {
   const activeProject = useStore((s) => s.activeProject);
   const runTarget = useStore((s) => s.runTarget);
   const renderShapes = useStore((s) => s.renderShapes);
+  const syncProjectDoc = useStore((s) => s.syncProjectDoc);
 
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -109,6 +118,12 @@ export function ProjectAgentPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ edits: patch.edits }),
       });
+      // Push the new source into any open tabs for the changed files so switching
+      // to them shows the accepted change (not the stale pre-agent text).
+      for (const e of patch.edits) {
+        const t = pathToTarget(e.path);
+        syncProjectDoc(activeProject, t.kind, t.name, e.new_source);
+      }
       setLastRationale(patch.rationale ?? null);
       setPatch(null);
       await runTargetNow();

@@ -153,6 +153,7 @@ interface StoreState {
 
   setRunTarget: (project: string, kind: string, name: string) => void;
   setActiveProject: (project: string | null) => void;
+  syncProjectDoc: (project: string, kind: string, name: string, source: string) => void;
   renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
 }
 
@@ -613,6 +614,18 @@ export const useStore = create<StoreState>()(
 
       setRunTarget: (project, kind, name) => set({ activeProject: project, runTarget: { kind, name } }),
       setActiveProject: (project) => set({ activeProject: project, runTarget: null }),
+      // Push new source into an already-open tab for a project file (e.g. after the
+      // agent writes it) so switching to that tab shows the change, not stale text.
+      syncProjectDoc: (project, kind, name, source) =>
+        set((s) => {
+          const docs = s.docs.map((d) =>
+            d.origin && d.origin.project === project && d.origin.kind === kind && d.origin.name === name
+              ? { ...d, source }
+              : d,
+          );
+          const active = docs.find((d) => d.id === s.activeDocId);
+          return { docs, source: active ? active.source : s.source, saveState: active?.origin ? "saved" : s.saveState };
+        }),
       renderShapes: (shapes, specs) =>
         set((s) => ({ shapes, geometryRev: s.geometryRev + 1, specs, stale: false, error: null, runState: "ok" })),
     }),
