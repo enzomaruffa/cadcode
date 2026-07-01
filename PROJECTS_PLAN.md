@@ -27,3 +27,12 @@ projects/<project>/
 5. **Project constants**: `project.py` edited via the existing tokens modal, scoped to the active project; parts/scenes import from it.
 6. **Scenes**: a scene doc type that imports parts + assembles; runs through the physics/animation/interaction pipeline (built alongside the concurrent motion work).
 7. **Cross-project parts**: parts are importable across projects; the library modal groups by project.
+
+## Multi-file agent (confirmed representation)
+
+The agent edits the **whole project**, not one buffer — and editing a part may cascade to other parts. Representation:
+
+- The edit is a **multi-file patch**: `edits: [{path, new_source}]` across `project.py` / `parts/*` / `scenes/*` (new files allowed). One file is the **run target** (the active scene, or a part being worked on) — that's what renders.
+- The agent runs an **edit → run → view → edit** loop: it reads the whole project (`read_project`), proposes edits, **dry-runs the run target with the edits applied** (`app/project_runner.run_project`, project + lib on `sys.path`), sees geometry/errors, and refines — iterating until it's happy, then returns the multi-file patch.
+- Review = per-file diff; Accept writes all files (one git checkpoint) + re-runs the run target. Undo/checkpoint snapshot the whole project.
+- Foundation: `app/project_runner.py` (materialize project + overrides in a temp dir, run the target with the project importable). Then `app/project_agent.py` (the multi-file agent) + `/projects/{project}/agent`. UI: project-scoped chat + multi-file diff review.
