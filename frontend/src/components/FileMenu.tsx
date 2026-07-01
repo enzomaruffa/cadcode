@@ -30,6 +30,7 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
   const source = useStore((s) => s.source);
   const newDoc = useStore((s) => s.newDoc);
   const openDoc = useStore((s) => s.openDoc);
+  const activeProject = useStore((s) => s.activeProject);
 
   const activeName = docs.find((d) => d.id === activeDocId)?.name ?? "model";
   const slug = activeName.replace(/\s+/g, "_").toLowerCase();
@@ -61,18 +62,28 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
   };
 
   const saveToLibrary = async () => {
-    const name = window.prompt("Save this part to your library as:", slug);
+    const name = window.prompt("Save this part as:", slug);
     if (!name) return;
+    // With an active project, offer to save into it (project-scoped); else global.
+    const toProject =
+      activeProject &&
+      window.confirm(`Save into project "${activeProject}"?\n\nOK = project part · Cancel = global library`)
+        ? activeProject
+        : null;
     setBusy("lib");
     try {
       const res = await fetch(`${HTTP_URL}/library/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, name }),
+        body: JSON.stringify({ source, name, project: toProject }),
       });
-      const d: { ok?: boolean; name?: string; error?: string } = await res.json();
-      if (d.ok) alert(`Saved to your library as "${d.name}".\nUse it with:  from lib.parts import ${d.name}`);
-      else alert(`Save failed: ${d.error ?? "unknown error"}`);
+      const d: { ok?: boolean; name?: string; project?: string; error?: string } = await res.json();
+      if (d.ok) {
+        const how = d.project ? `from parts.${d.name} import ${d.name}` : `from lib.parts import ${d.name}`;
+        alert(
+          `Saved "${d.name}"${d.project ? ` into project "${d.project}"` : " to the global library"}.\nUse it with:  ${how}`,
+        );
+      } else alert(`Save failed: ${d.error ?? "unknown error"}`);
       setOpen(false);
     } catch (e) {
       alert(`Save failed: ${e}`);

@@ -444,7 +444,10 @@ export const useStore = create<StoreState>()(
 
       runNow: () => {
         if (debounceTimer) clearTimeout(debounceTimer);
-        send(RUN, {});
+        const active = get().docs.find((d) => d.id === get().activeDocId);
+        if (active?.origin)
+          void runProjectDoc(active.origin, active.source); // project file → project runner
+        else send(RUN, {});
       },
 
       sendSelect: (kind, shapeId, index) => {

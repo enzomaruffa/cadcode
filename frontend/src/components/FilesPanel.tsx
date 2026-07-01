@@ -9,9 +9,28 @@ interface ProjectTree {
   scenes: string[];
 }
 
+// Starter skeletons for new project files. Parts are parametric functions that
+// RETURN an object (no show); scenes assemble + show + require.
+const PART_SKELETON = (name: string) => `from build123d import Box
+
+# from project import UNIT, WALL  # project-wide constants
+
+def ${name}(SIZE=20.0):
+    return Box(SIZE, SIZE, SIZE)
+`;
+
+const SCENE_SKELETON = (name: string) => `from build123d import Box
+
+# from parts.<part> import <part>   # assemble the project's parts here
+
+part = Box(20, 20, 5)
+show(part, name="${name}")
+require(part.volume > 0, "has volume")
+`;
+
 // A project file tree (project.py + parts/ + scenes/). Clicking a file opens it
-// as an editor tab and makes it the project agent's run target. Lives in the
-// agent column (toggle at the top).
+// as an editor tab and makes it the project agent's run target; the + buttons
+// add new parts/scenes. Lives in the agent column (toggle at the top).
 export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
   const [projects, setProjects] = useState<ProjectTree[]>([]);
   const openDoc = useStore((s) => s.openDoc);
@@ -58,28 +77,46 @@ export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
     refresh();
   };
 
+  const createFile = async (project: string, kind: "part" | "scene") => {
+    const raw = window.prompt(`New ${kind} name:`);
+    if (!raw) return;
+    const name = raw.trim();
+    const source = kind === "part" ? PART_SKELETON(sanitize(name)) : SCENE_SKELETON(name);
+    await fetch(`${HTTP_URL}/projects/${project}/file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, name, source }),
+    }).catch(() => void 0);
+    await refresh();
+    open(project, kind, name, name);
+  };
+
   return (
     <div className="files">
       <div className="files-head">
         <span>projects</span>
         <button className="files-add" onClick={newProject} title="New project">
-          + new
+          + project
         </button>
       </div>
       <div className="files-tree">
-        {projects.length === 0 && (
-          <div className="files-empty">
-            No projects yet. Create one, or use <em>File → Save to library</em>.
-          </div>
-        )}
+        {projects.length === 0 && <div className="files-empty">No projects yet — create one with + project.</div>}
         {projects.map((p) => (
           <div className="files-project" key={p.name}>
-            <div className="files-project-name">{p.name}</div>
-            {p.constants && (
-              <button className="files-file" onClick={() => open(p.name, "project", "", `${p.name}/project.py`)}>
-                project.py
-              </button>
-            )}
+            <div className="files-project-head">
+              <span className="files-project-name">{p.name}</span>
+              <span className="files-project-add">
+                <button onClick={() => createFile(p.name, "part")} title="New part">
+                  +part
+                </button>
+                <button onClick={() => createFile(p.name, "scene")} title="New scene">
+                  +scene
+                </button>
+              </span>
+            </div>
+            <button className="files-file" onClick={() => open(p.name, "project", "", `${p.name}/project.py`)}>
+              project.py
+            </button>
             {p.parts.map((part) => (
               <button className="files-file" key={`pt-${part}`} onClick={() => open(p.name, "part", part, part)}>
                 parts/{part}.py
@@ -90,11 +127,7 @@ export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
                 <button className="files-file" onClick={() => open(p.name, "scene", scene, scene)}>
                   scenes/{scene}.py
                 </button>
-                <button
-                  className="files-run"
-                  onClick={() => runScene(p.name, scene)}
-                  title="Run this scene in the project agent"
-                >
+                <button className="files-run" onClick={() => runScene(p.name, scene)} title="Run this scene">
                   ▶
                 </button>
               </div>
@@ -104,4 +137,14 @@ export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
       </div>
     </div>
   );
+}
+
+// Mirror the backend's identifier sanitization for the part's function name.
+function sanitize(name: string): string {
+  const s = name
+    .trim()
+    .toLowerCase()
+    .replace(/\W+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return !s || /^\d/.test(s) ? `x_${s}` : s;
 }

@@ -1,5 +1,6 @@
 import * as monaco from "monaco-editor";
 import { HTTP_URL } from "../config";
+import { useStore } from "./store";
 
 // Lightweight build123d autocomplete for the Python editor. Not a full language
 // server — a curated list of primitives, operations, selectors, enums, cadcode
@@ -123,13 +124,40 @@ const PLANE_MEMBERS: Item[] = ["XY", "XZ", "YZ", "front", "top", "right"].map((p
   kind: K.EnumMember,
 }));
 
+// Live design tokens: global (lib.design) + the active project's constants
+// (project.py). Both offered in autocomplete; the project set refreshes when the
+// active project changes.
 let designTokens: string[] = [];
+let projectTokens: string[] = [];
+
 fetch(`${HTTP_URL}/design`)
   .then((r) => r.json())
   .then((d: { tokens?: { name: string }[] }) => {
     designTokens = (d.tokens ?? []).map((t) => t.name);
   })
   .catch(() => void 0);
+
+function refreshProjectTokens(project: string | null) {
+  if (!project) {
+    projectTokens = [];
+    return;
+  }
+  fetch(`${HTTP_URL}/projects/${project}/design`)
+    .then((r) => r.json())
+    .then((d: { tokens?: { name: string }[] }) => {
+      projectTokens = (d.tokens ?? []).map((t) => t.name);
+    })
+    .catch(() => void 0);
+}
+
+let lastProject = useStore.getState().activeProject;
+refreshProjectTokens(lastProject);
+useStore.subscribe((state) => {
+  if (state.activeProject !== lastProject) {
+    lastProject = state.activeProject;
+    refreshProjectTokens(lastProject);
+  }
+});
 
 monaco.languages.registerCompletionItemProvider("python", {
   triggerCharacters: ["."],
@@ -145,7 +173,10 @@ monaco.languages.registerCompletionItemProvider("python", {
     else
       items = [
         ...TOP_LEVEL,
-        ...designTokens.map((t) => ({ label: t, insert: t, kind: K.Constant, detail: "design token" })),
+        ...projectTokens.map((t) => ({ label: t, insert: t, kind: K.Constant, detail: "project constant" })),
+        ...designTokens
+          .filter((t) => !projectTokens.includes(t))
+          .map((t) => ({ label: t, insert: t, kind: K.Constant, detail: "design token" })),
       ];
 
     const suggestions = items.map((it) => ({

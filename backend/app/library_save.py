@@ -82,8 +82,13 @@ def _register(parts_dir: Path, name: str) -> None:
     init.write_text(text)
 
 
-def save_part(name: str, source: str) -> dict:
-    """Write + register a part module. Returns {ok, name} or {ok: False, error}."""
+def save_part(name: str, source: str, project: str | None = None) -> dict:
+    """Write + register a part module. Returns {ok, name} or {ok: False, error}.
+
+    With `project`, the part is saved into that project's `parts/` folder
+    (`projects/<project>/parts/<name>.py`), importable within the project as
+    `from parts.<name> import <name>`. Without it, the part goes to the GLOBAL
+    catalog (`lib/parts/`), importable everywhere as `from lib.parts import <name>`."""
     ident = sanitize_name(name)
     try:
         module_text = script_to_part(source, ident)
@@ -91,6 +96,14 @@ def save_part(name: str, source: str) -> dict:
         return {"ok": False, "error": f"the script has a syntax error: {exc}"}
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    if project:
+        from app.projects import write_file
+
+        r = write_file(project, "part", ident, module_text)
+        if not r.get("ok"):
+            return {"ok": False, "error": r.get("error") or "failed to write the project part"}
+        return {"ok": True, "name": ident, "project": r.get("project")}
 
     import lib.parts as _parts
 

@@ -168,34 +168,21 @@ def _design_path() -> Path:
     return Path(lib.design.__file__)
 
 
-@app.get("/design")
-async def get_design() -> dict:
-    """Shared design tokens (lib/design.py) — name, value, and doc comment — so
-    the UI can show what's importable and let you tune them."""
+def _parse_tokens(text: str) -> list[dict]:
+    """Numeric constants (NAME = value  # comment) in a tokens file → list of
+    {name, value, comment}. Shared by global lib.design and a project's project.py."""
     tokens = []
-    try:
-        for line in _design_path().read_text().splitlines():
-            m = _TOKEN_RE.match(line)
-            if m:
-                tokens.append({"name": m.group(1), "value": float(m.group(2)), "comment": (m.group(3) or "").strip()})
-    except Exception as exc:  # noqa: BLE001
-        return {"tokens": [], "error": str(exc)}
-    return {"tokens": tokens}
+    for line in text.splitlines():
+        m = _TOKEN_RE.match(line)
+        if m:
+            tokens.append({"name": m.group(1), "value": float(m.group(2)), "comment": (m.group(3) or "").strip()})
+    return tokens
 
 
-@app.post("/design")
-async def set_design(payload: dict) -> dict:
-    """Write new design-token values into lib/design.py and recycle the kernel so
-    the next run (and every part) re-derives with them."""
-    updates = payload.get("updates")
-    if not isinstance(updates, dict) or not updates:
-        return {"ok": False, "error": "no updates"}
-    path = _design_path()
-    try:
-        lines = path.read_text().splitlines()
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-
+def _rewrite_tokens(text: str, updates: dict) -> tuple[str, bool]:
+    """Rewrite numeric-token values in `text` from `updates` (name→value),
+    preserving comments and everything else. Returns (new_text, changed)."""
+    lines = text.splitlines()
     changed = False
     for i, line in enumerate(lines):
         m = _TOKEN_RE.match(line)
@@ -210,13 +197,69 @@ async def set_design(payload: dict) -> dict:
         if newline != line:
             lines[i] = newline
             changed = True
+    return ("\n".join(lines) + "\n", changed)
 
+
+async def _reload_kernel() -> None:
+    kernel = getattr(app.state, "kernel", None)
+    reload = getattr(kernel, "reload_design", None)
+    if reload is not None:
+        await reload()
+
+
+@app.get("/design")
+async def get_design() -> dict:
+    """Shared GLOBAL design tokens (lib/design.py) — name, value, doc comment —
+    so the UI can show what's importable and let you tune them. For a project's
+    own constants, use /projects/{project}/design."""
+    try:
+        return {"tokens": _parse_tokens(_design_path().read_text())}
+    except Exception as exc:  # noqa: BLE001
+        return {"tokens": [], "error": str(exc)}
+
+
+@app.post("/design")
+async def set_design(payload: dict) -> dict:
+    """Write new global design-token values into lib/design.py and recycle the
+    kernel so the next run (and every part) re-derives with them."""
+    updates = payload.get("updates")
+    if not isinstance(updates, dict) or not updates:
+        return {"ok": False, "error": "no updates"}
+    path = _design_path()
+    try:
+        text, changed = _rewrite_tokens(path.read_text(), updates)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
     if changed:
-        path.write_text("\n".join(lines) + "\n")
-        kernel = getattr(app.state, "kernel", None)
-        reload = getattr(kernel, "reload_design", None)
-        if reload is not None:
-            await reload()
+        path.write_text(text)
+        await _reload_kernel()
+    return {"ok": True, "changed": changed}
+
+
+@app.get("/projects/{project}/design")
+async def get_project_design(project: str) -> dict:
+    """A project's own constants (project.py) as tunable tokens — the
+    project-scoped equivalent of /design. Imported everywhere as `from project`."""
+    from app.projects import read_file
+
+    r = read_file(project, "project", "")
+    return {"project": project, "tokens": _parse_tokens(r.get("source") or "")}
+
+
+@app.post("/projects/{project}/design")
+async def set_project_design(project: str, payload: dict) -> dict:
+    """Tune a project's constants (project.py) — rewrites values in place and
+    recycles the kernel so parts/scenes re-derive with them."""
+    from app.projects import read_file, write_file
+
+    updates = payload.get("updates")
+    if not isinstance(updates, dict) or not updates:
+        return {"ok": False, "error": "no updates"}
+    src = read_file(project, "project", "").get("source") or ""
+    text, changed = _rewrite_tokens(src, updates)
+    if changed:
+        write_file(project, "project", "", text)
+        await _reload_kernel()
     return {"ok": True, "changed": changed}
 
 
@@ -230,10 +273,12 @@ async def library_save(payload: dict) -> dict:
 
     source = str(payload.get("source") or "")
     name = str(payload.get("name") or "")
+    project = payload.get("project")
+    project = str(project) if project else None
     if not source.strip():
         return {"ok": False, "error": "no source to save"}
 
-    result = await asyncio.to_thread(save_part, name, source)
+    result = await asyncio.to_thread(save_part, name, source, project)
     if result.get("ok"):
         kernel = getattr(app.state, "kernel", None)
         reload = getattr(kernel, "reload_design", None)
