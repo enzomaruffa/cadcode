@@ -92,6 +92,33 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
     }
   };
 
+  const saveAsIs = async () => {
+    if (!activeProject) {
+      alert("Pick or create a project first (top bar), then you can save the code as-is into it.");
+      return;
+    }
+    const name = window.prompt(`Save the current code exactly as-is into "${activeProject}" as a scene named:`, slug);
+    if (!name) return;
+    setBusy("asis");
+    try {
+      // A scene is a verbatim script (show/require in scope) — no function
+      // transform, so the code is saved exactly as written.
+      const res = await fetch(`${HTTP_URL}/projects/${activeProject}/file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "scene", name, source }),
+      });
+      const d: { ok?: boolean; name?: string; error?: string } = await res.json();
+      if (d.ok) alert(`Saved as-is into "${activeProject}" as scenes/${d.name}.py`);
+      else alert(`Save failed: ${d.error ?? "unknown error"}`);
+      setOpen(false);
+    } catch (e) {
+      alert(`Save failed: ${e}`);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const exportAs = async (fmt: string) => {
     setBusy(fmt);
     try {
@@ -137,7 +164,15 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
             Save .py
           </button>
           <button className="menu-item" onClick={saveToLibrary} disabled={busy === "lib"}>
-            {busy === "lib" ? "saving…" : "Save to library…"}
+            {busy === "lib" ? "saving…" : "Save to library (as a part)…"}
+          </button>
+          <button
+            className="menu-item"
+            onClick={saveAsIs}
+            disabled={busy === "asis"}
+            title="Save the exact code into a project as a scene (no function transform)"
+          >
+            {busy === "asis" ? "saving…" : "Save to project as-is…"}
           </button>
           <div className="menu-sep" />
           <div className="menu-label">Examples</div>

@@ -12,6 +12,7 @@ import { EditorColorsModal } from "./components/EditorColorsModal";
 import { DesignTokensModal } from "./components/DesignTokensModal";
 import { HelpModal } from "./components/HelpModal";
 import { FileMenu } from "./components/FileMenu";
+import { ProjectMenu } from "./components/ProjectMenu";
 import { HistoryControls } from "./components/HistoryControls";
 import { useStore } from "./lib/store";
 
@@ -121,7 +122,7 @@ export default function App() {
     <header className="topbar">
       <FileMenu onEditorColors={() => setShowColors(true)} />
       <span className="brand">cadcode</span>
-      <span className="tagline">the canvas is code</span>
+      <ProjectMenu />
       <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">
         ⊞ library
       </button>

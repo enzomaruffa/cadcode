@@ -150,6 +150,7 @@ interface StoreState {
   redo: () => void;
 
   setRunTarget: (project: string, kind: string, name: string) => void;
+  setActiveProject: (project: string | null) => void;
   renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
 }
 
@@ -297,8 +298,11 @@ export const useStore = create<StoreState>()(
                 geometryRev: s.geometryRev + 1,
                 stale: !!p.stale,
                 stdout: p.stdout ?? s.stdout,
-                specs: incomingMode === "technical" ? (p.specs ?? []) : s.specs,
-                params: incomingMode === "technical" ? (p.params ?? []) : s.params,
+                // A stale render (a failed compile re-showing the last good geometry)
+                // carries no specs/params — keep the previous ones so sliders + specs
+                // don't flap on every transient error while typing.
+                specs: p.stale ? s.specs : incomingMode === "technical" ? (p.specs ?? []) : s.specs,
+                params: p.stale ? s.params : incomingMode === "technical" ? (p.params ?? []) : s.params,
                 printStats:
                   incomingMode === "printability"
                     ? ((p.print_stats as unknown as StoreState["printStats"]) ?? null)
@@ -544,6 +548,7 @@ export const useStore = create<StoreState>()(
       redo: () => send(REDO, {}),
 
       setRunTarget: (project, kind, name) => set({ activeProject: project, runTarget: { kind, name } }),
+      setActiveProject: (project) => set({ activeProject: project, runTarget: null }),
       renderShapes: (shapes, specs) =>
         set((s) => ({ shapes, geometryRev: s.geometryRev + 1, specs, stale: false, error: null, runState: "ok" })),
     }),

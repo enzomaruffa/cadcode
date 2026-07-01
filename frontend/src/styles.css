@@ -2159,6 +2159,22 @@ textarea {
   color: var(--text-dim);
   padding: var(--sp-1) var(--sp-3) 2px;
 }
+.menu-empty {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+}
+.menu-item.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* top-bar current-project switcher */
+.projectmenu {
+  position: relative;
+}
+.projectmenu .lib-btn {
+  font-family: var(--font-mono);
+}
 
 /* ===== design tokens modal ===== */
 .tokens-list {

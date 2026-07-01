@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
 
@@ -28,112 +28,96 @@ show(part, name="${name}")
 require(part.volume > 0, "has volume")
 `;
 
-// A project file tree (project.py + parts/ + scenes/). Clicking a file opens it
-// as an editor tab and makes it the project agent's run target; the + buttons
-// add new parts/scenes. Lives in the agent column (toggle at the top).
-export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
-  const [projects, setProjects] = useState<ProjectTree[]>([]);
+// The CURRENT project's files (project.py + parts/ + scenes/). Clicking opens a
+// file; the + buttons add parts/scenes. Switching/creating projects lives in the
+// top-bar project menu — this pane is scoped to whatever project is active.
+export function FilesPanel() {
+  const activeProject = useStore((s) => s.activeProject);
   const openDoc = useStore((s) => s.openDoc);
   const setRunTarget = useStore((s) => s.setRunTarget);
+  const [tree, setTree] = useState<ProjectTree | null>(null);
 
-  const refresh = () =>
+  // Only sets state in the async callback; the render guards on activeProject, so
+  // a stale tree while switching to "no project" never shows.
+  const refresh = useCallback(() => {
+    if (!activeProject) return;
     fetch(`${HTTP_URL}/projects`)
       .then((r) => r.json())
-      .then((d: { projects?: ProjectTree[] }) => setProjects(d.projects ?? []))
+      .then((d: { projects?: ProjectTree[] }) => setTree(d.projects?.find((p) => p.name === activeProject) ?? null))
       .catch(() => void 0);
+  }, [activeProject]);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
-  const open = async (project: string, kind: string, name: string, label: string) => {
+  const open = async (kind: string, name: string, label: string) => {
+    if (!activeProject) return;
     try {
-      const r = await fetch(`${HTTP_URL}/projects/${project}/file?kind=${kind}&name=${encodeURIComponent(name)}`);
+      const r = await fetch(`${HTTP_URL}/projects/${activeProject}/file?kind=${kind}&name=${encodeURIComponent(name)}`);
       const d: { source?: string } = await r.json();
-      // Tag the tab with its project origin so live-runs go through the project
-      // runner (project on sys.path), not the single-buffer kernel.
-      if (typeof d.source === "string") openDoc(label, d.source, { project, kind, name });
-      // Make this the project agent's run/render target (scenes render; the
-      // agent edits the whole project around whatever file you're on).
-      setRunTarget(project, kind, name);
+      if (typeof d.source === "string") openDoc(label, d.source, { project: activeProject, kind, name });
+      setRunTarget(activeProject, kind, name);
     } catch {
       /* ignore */
     }
   };
 
-  const runScene = (project: string, scene: string) => {
-    setRunTarget(project, "scene", scene);
-    onOpenProject?.();
-  };
-
-  const newProject = async () => {
-    const name = window.prompt("New project name:");
-    if (!name) return;
-    await fetch(`${HTTP_URL}/projects`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    }).catch(() => void 0);
-    refresh();
-  };
-
-  const createFile = async (project: string, kind: "part" | "scene") => {
+  const createFile = async (kind: "part" | "scene") => {
+    if (!activeProject) return;
     const raw = window.prompt(`New ${kind} name:`);
     if (!raw) return;
     const name = raw.trim();
     const source = kind === "part" ? PART_SKELETON(sanitize(name)) : SCENE_SKELETON(name);
-    await fetch(`${HTTP_URL}/projects/${project}/file`, {
+    await fetch(`${HTTP_URL}/projects/${activeProject}/file`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, name, source }),
     }).catch(() => void 0);
     await refresh();
-    open(project, kind, name, name);
+    open(kind, name, name);
   };
+
+  if (!activeProject) {
+    return (
+      <div className="files">
+        <div className="files-empty">
+          No project selected. Pick or create one from the <em>project menu</em> in the top bar.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="files">
       <div className="files-head">
-        <span>projects</span>
-        <button className="files-add" onClick={newProject} title="New project">
-          + project
-        </button>
+        <span>{activeProject}</span>
+        <span className="files-project-add">
+          <button onClick={() => createFile("part")} title="New part">
+            +part
+          </button>
+          <button onClick={() => createFile("scene")} title="New scene">
+            +scene
+          </button>
+        </span>
       </div>
       <div className="files-tree">
-        {projects.length === 0 && <div className="files-empty">No projects yet — create one with + project.</div>}
-        {projects.map((p) => (
-          <div className="files-project" key={p.name}>
-            <div className="files-project-head">
-              <span className="files-project-name">{p.name}</span>
-              <span className="files-project-add">
-                <button onClick={() => createFile(p.name, "part")} title="New part">
-                  +part
-                </button>
-                <button onClick={() => createFile(p.name, "scene")} title="New scene">
-                  +scene
-                </button>
-              </span>
-            </div>
-            <button className="files-file" onClick={() => open(p.name, "project", "", `${p.name}/project.py`)}>
-              project.py
-            </button>
-            {p.parts.map((part) => (
-              <button className="files-file" key={`pt-${part}`} onClick={() => open(p.name, "part", part, part)}>
-                parts/{part}.py
-              </button>
-            ))}
-            {p.scenes.map((scene) => (
-              <div className="files-file-row" key={`sc-${scene}`}>
-                <button className="files-file" onClick={() => open(p.name, "scene", scene, scene)}>
-                  scenes/{scene}.py
-                </button>
-                <button className="files-run" onClick={() => runScene(p.name, scene)} title="Run this scene">
-                  ▶
-                </button>
-              </div>
-            ))}
-          </div>
+        <button className="files-file" onClick={() => open("project", "", `${activeProject}/project.py`)}>
+          project.py
+        </button>
+        {(tree?.parts ?? []).map((part) => (
+          <button className="files-file" key={`pt-${part}`} onClick={() => open("part", part, part)}>
+            parts/{part}.py
+          </button>
         ))}
+        {(tree?.scenes ?? []).map((scene) => (
+          <button className="files-file" key={`sc-${scene}`} onClick={() => open("scene", scene, scene)}>
+            scenes/{scene}.py
+          </button>
+        ))}
+        {tree && tree.parts.length === 0 && tree.scenes.length === 0 && (
+          <div className="files-empty">No parts or scenes yet — add one with +part / +scene.</div>
+        )}
       </div>
     </div>
   );
