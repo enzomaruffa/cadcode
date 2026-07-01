@@ -281,6 +281,79 @@ async def set_project_file(project: str, payload: dict) -> dict:
     return result
 
 
+@app.get("/projects/{project}/files")
+async def get_project_files(project: str) -> dict:
+    """Every source file in the project as {relpath: source} — the file view +
+    the diff base for the multi-file agent."""
+    from app.projects import project_files
+
+    return {"project": project, "files": project_files(project)}
+
+
+@app.post("/projects/{project}/run")
+async def run_project_target(project: str, payload: dict) -> dict:
+    """Run one project file (a scene assembling parts, or a single part) with the
+    project importable, applying any uncommitted `overrides` ({relpath: source}).
+    Returns the RunResult dict (ok/error/shapes/bbox/specs) for rendering."""
+    import asyncio
+
+    from app.project_runner import run_project
+
+    kind = str(payload.get("kind") or "scene")
+    name = str(payload.get("name") or "")
+    overrides = payload.get("overrides") or None
+    if overrides is not None and not isinstance(overrides, dict):
+        overrides = None
+    return await asyncio.to_thread(run_project, project, kind, name, overrides)
+
+
+@app.post("/projects/{project}/agent")
+async def project_agent(project: str, payload: dict) -> dict:
+    """Run the whole-project multi-file agent for one request. Returns
+    {ok, edits: [{path, new_source}], rationale, targets} — a multi-file patch
+    the UI reviews as per-file diffs before writing."""
+    from app.library import catalog
+    from app.project_agent import run_project_agent
+
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return {"ok": False, "error": "empty message"}
+    try:
+        library = catalog()
+    except Exception:
+        library = []
+    return await run_project_agent(
+        project,
+        message,
+        str(payload.get("run_kind") or "scene"),
+        str(payload.get("run_name") or ""),
+        selection=payload.get("selection"),
+        library=library,
+    )
+
+
+@app.post("/projects/{project}/apply")
+async def apply_project_patch(project: str, payload: dict) -> dict:
+    """Write an accepted multi-file patch — a list of {path, new_source} edits —
+    to the project atomically-ish, then recycle the kernel so imports refresh."""
+    from app.projects import write_project_files
+
+    raw = payload.get("edits") or []
+    edits: dict[str, str] = {}
+    for e in raw:
+        if isinstance(e, dict) and e.get("path"):
+            edits[str(e["path"])] = str(e.get("new_source") or "")
+    if not edits:
+        return {"ok": False, "error": "no edits"}
+    result = write_project_files(project, edits)
+    if result.get("ok"):
+        kernel = getattr(app.state, "kernel", None)
+        reload = getattr(kernel, "reload_design", None)
+        if reload is not None:
+            await reload()
+    return result
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
