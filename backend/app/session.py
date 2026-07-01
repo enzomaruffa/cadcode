@@ -292,9 +292,9 @@ class Session:
 
     def _gitstore(self) -> Any:
         if self._git is None:
-            from app.gitstore import GitStore
+            from app.gitstore import make_store
 
-            self._git = GitStore()
+            self._git = make_store()  # git if available/enabled, else a plain folder
         return self._git
 
     async def send_history(self) -> None:

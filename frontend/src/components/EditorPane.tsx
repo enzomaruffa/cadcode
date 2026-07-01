@@ -1,4 +1,4 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
 import { useStore } from "../lib/store";
@@ -19,6 +19,9 @@ export function EditorPane() {
   const error = useStore((s) => s.error);
   const setActiveLine = useStore((s) => s.setActiveLine);
   const revealLine = useStore((s) => s.revealLine);
+  const pendingPatch = useStore((s) => s.pendingPatch);
+  const acceptPatch = useStore((s) => s.acceptPatch);
+  const rejectPatch = useStore((s) => s.rejectPatch);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -106,6 +109,45 @@ export function EditorPane() {
       monaco.editor.setModelMarkers(model, "cad", []);
     }
   }, [error]);
+
+  // When the agent proposes a patch, show it as an inline diff right in the code
+  // pane (current vs proposed), with accept/reject; otherwise the normal editor.
+  if (pendingPatch) {
+    return (
+      <div className="editor-wrap">
+        <div className="diff-banner">
+          <span>agent's proposed change</span>
+          <div className="diff-banner-actions">
+            <button className="btn btn-accept" onClick={acceptPatch}>
+              Accept
+            </button>
+            <button className="btn btn-reject" onClick={rejectPatch}>
+              Reject
+            </button>
+          </div>
+        </div>
+        <DiffEditor
+          className="editor"
+          language="python"
+          theme="cadcode"
+          original={source}
+          modified={pendingPatch.new_source}
+          options={{
+            renderSideBySide: false,
+            readOnly: true,
+            fontSize: 13.5,
+            lineHeight: 21,
+            fontFamily: '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            renderOverviewRuler: false,
+            padding: { top: 12, bottom: 12 },
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="editor-wrap">

@@ -69,3 +69,65 @@ class GitStore:
 
     def _head_entry(self) -> dict[str, Any]:
         return self._entry(self._ensure().head.commit)
+
+
+class FolderStore:
+    """Git-free durable checkpoints: numbered source snapshots in a folder + a
+    JSON manifest. Same interface as GitStore. Used when git is disabled
+    (``CAD_GIT=0``) or unavailable, so history never hard-depends on git."""
+
+    def __init__(self, path: Path = _WORKSPACE) -> None:
+        self.dir = Path(path) / "snapshots"
+        self.manifest = self.dir / "manifest.json"
+
+    def _load(self) -> list[dict[str, Any]]:
+        import json
+
+        try:
+            return json.loads(self.manifest.read_text())
+        except Exception:
+            return []
+
+    def _save(self, entries: list[dict[str, Any]]) -> None:
+        import json
+
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.manifest.write_text(json.dumps(entries, indent=2))
+
+    def checkpoint(self, source: str, message: str = "checkpoint") -> dict[str, Any]:
+        import hashlib
+        import time
+
+        self.dir.mkdir(parents=True, exist_ok=True)
+        entries = self._load()
+        if entries:  # skip if unchanged since the last snapshot
+            last = self.dir / f"{entries[0]['sha']}.py"
+            if last.exists() and last.read_text() == source:
+                return entries[0]
+        sha = hashlib.sha1(f"{time.time()}{source}".encode()).hexdigest()
+        (self.dir / f"{sha}.py").write_text(source)
+        entry = {"sha": sha, "short": sha[:8], "message": message, "time": int(time.time())}
+        entries.insert(0, entry)  # newest first
+        self._save(entries)
+        return entry
+
+    def log(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self._load()[:limit]
+
+    def source_at(self, sha: str) -> str:
+        return (self.dir / f"{sha}.py").read_text()
+
+
+def make_store(path: Path = _WORKSPACE) -> Any:
+    """Pick the checkpoint store: git when enabled + available, else a plain
+    folder. Set ``CAD_GIT=0`` to force folder-only; otherwise git is tried and we
+    fall back to the folder if it isn't usable."""
+    disabled = os.environ.get("CAD_GIT", "1").lower() in ("0", "false", "no", "off")
+    if not disabled:
+        try:
+            store = GitStore(path)
+            store._ensure()  # verifies GitPython + the git binary actually work
+            return store
+        except Exception:
+            pass  # git not usable — fall back to the folder store
+    return FolderStore(path)
