@@ -1678,6 +1678,18 @@ textarea {
 .status-stale {
   color: var(--warn);
 }
+.status-save {
+  font-size: var(--fs-xs);
+}
+.status-save-saved {
+  color: var(--ok);
+}
+.status-save-saving {
+  color: var(--text-dim);
+}
+.status-save-dirty {
+  color: var(--warn);
+}
 .status-specs.specs-pass {
   color: var(--ok);
 }

@@ -121,6 +121,8 @@ interface StoreState {
   // The active project + which file the project-agent runs/renders as the target.
   activeProject: string | null;
   runTarget: { kind: string; name: string } | null;
+  // Auto-save status of the active PROJECT file (null for the scratch buffer).
+  saveState: "saved" | "saving" | "dirty" | null;
 
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
@@ -205,6 +207,24 @@ async function runProjectDoc(origin: Origin, source: string) {
   }
 }
 
+// Persist a project file to disk (autosave). reload:false — the project runner
+// always re-materializes from disk + the live buffer, so no kernel recycle is
+// needed per keystroke. Fire-and-forget; drives the saveState indicator.
+async function saveProjectDoc(origin: Origin, source: string) {
+  useStore.setState({ saveState: "saving" });
+  try {
+    await fetch(`${HTTP_URL}/projects/${origin.project}/file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: origin.kind, name: origin.name, source, reload: false }),
+    });
+    // Only clear to "saved" if nothing newer is pending.
+    if (useStore.getState().saveState === "saving") useStore.setState({ saveState: "saved" });
+  } catch {
+    useStore.setState({ saveState: "dirty" });
+  }
+}
+
 export const useStore = create<StoreState>()(
   persist(
     (set, get) => ({
@@ -242,6 +262,7 @@ export const useStore = create<StoreState>()(
       canRedo: false,
       activeProject: null,
       runTarget: null,
+      saveState: null,
 
       connect: () => {
         // Guard against React StrictMode's double-invoke opening two sockets.
@@ -393,8 +414,18 @@ export const useStore = create<StoreState>()(
         if (debounceTimer) clearTimeout(debounceTimer);
         const active = get().docs.find((d) => d.id === get().activeDocId);
         const origin = active?.origin;
-        // Project files run through the project runner; plain buffers over the WS.
-        const fire = origin ? () => void runProjectDoc(origin, source) : () => send(EDIT, { source, debounced: true });
+        // Project files run through the project runner AND auto-save to disk; plain
+        // buffers run over the WS (persisted in localStorage, not a file).
+        let fire: () => void;
+        if (origin) {
+          set({ saveState: "dirty" });
+          fire = () => {
+            void runProjectDoc(origin, source);
+            void saveProjectDoc(origin, source);
+          };
+        } else {
+          fire = () => send(EDIT, { source, debounced: true });
+        }
         if (opts?.immediate) fire();
         else debounceTimer = setTimeout(fire, EDIT_DEBOUNCE_MS);
       },
@@ -429,7 +460,13 @@ export const useStore = create<StoreState>()(
         const doc = get().docs.find((d) => d.id === id);
         if (!doc) return;
         if (debounceTimer) clearTimeout(debounceTimer);
-        set({ activeDocId: id, source: doc.source, selection: null, error: null });
+        set({
+          activeDocId: id,
+          source: doc.source,
+          selection: null,
+          error: null,
+          saveState: doc.origin ? "saved" : null,
+        });
         if (doc.origin)
           void runProjectDoc(doc.origin, doc.source); // project file → project runner
         else send(EDIT, { source: doc.source }); // plain buffer → single-buffer kernel

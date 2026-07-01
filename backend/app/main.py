@@ -318,7 +318,10 @@ async def set_project_file(project: str, payload: dict) -> dict:
     result = write_file(
         project, str(payload.get("kind") or "part"), str(payload.get("name") or ""), str(payload.get("source") or "")
     )
-    if result.get("ok"):
+    # Autosave passes reload=false: the project runner re-materializes from disk +
+    # overrides every run (no stale module cache), so a recycle isn't needed for
+    # keystroke-by-keystroke saves — only for explicit saves other code imports.
+    if result.get("ok") and payload.get("reload", True):
         kernel = getattr(app.state, "kernel", None)
         reload = getattr(kernel, "reload_design", None)
         if reload is not None:

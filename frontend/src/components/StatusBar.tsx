@@ -6,6 +6,7 @@ export function StatusBar() {
   const error = useStore((s) => s.error);
   const stale = useStore((s) => s.stale);
   const specs = useStore((s) => s.specs);
+  const saveState = useStore((s) => s.saveState);
 
   const specsPassed = specs.filter((s) => s.passed).length;
   const specsFailed = specs.filter((s) => !s.passed);
@@ -20,6 +21,11 @@ export function StatusBar() {
       <span className="status-conn">{conn}</span>
       <span className={`status-run status-run-${runState}`}>{runLabel}</span>
       {stale && <span className="status-stale">showing last good geometry</span>}
+      {saveState && (
+        <span className={`status-save status-save-${saveState}`}>
+          {saveState === "saving" ? "saving…" : saveState === "saved" ? "✓ saved to project" : "unsaved"}
+        </span>
+      )}
       {specs.length > 0 && (
         <span className={`status-specs ${specsFailed.length ? "specs-fail" : "specs-pass"}`}>
           {specsFailed.length ? "✗" : "✓"} specs {specsPassed}/{specs.length}
