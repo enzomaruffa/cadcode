@@ -244,5 +244,19 @@ function hullPolyhedron(points: THREE.Vector3[]): CANNON.ConvexPolyhedron | null
   }
   cg.dispose();
   if (verts.length < 4 || faces.length < 4) return null;
+  // cannon's SAT needs each face wound so its normal points OUTWARD; three's
+  // ConvexGeometry winding isn't guaranteed to match, which makes hull-vs-hull
+  // silently non-colliding. Orient every face by the hull centroid.
+  const centroid = new CANNON.Vec3(0, 0, 0);
+  for (const v of verts) centroid.vadd(v, centroid);
+  centroid.scale(1 / verts.length, centroid);
+  for (const f of faces) {
+    const [a, b, c] = f;
+    const n = verts[b].vsub(verts[a]).cross(verts[c].vsub(verts[a]));
+    if (n.dot(verts[a].vsub(centroid)) < 0) {
+      f[1] = c;
+      f[2] = b;
+    }
+  }
   return new CANNON.ConvexPolyhedron({ vertices: verts, faces });
 }
