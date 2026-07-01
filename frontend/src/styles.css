@@ -2196,11 +2196,25 @@ textarea {
 }
 .token-row {
   display: grid;
-  grid-template-columns: 160px 1fr 96px;
+  grid-template-columns: 140px 1fr auto;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2);
   border-radius: var(--r-sm);
+}
+.token-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 220px;
+}
+.token-slider .param-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.token-slider .token-input {
+  flex: 0 0 auto;
+  width: 62px;
 }
 .token-row:hover {
   background: var(--bg-pane);
@@ -2218,6 +2232,7 @@ textarea {
   white-space: nowrap;
 }
 .token-input {
+  width: 90px;
   background: var(--bg-pane);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);

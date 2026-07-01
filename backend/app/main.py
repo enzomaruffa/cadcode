@@ -159,7 +159,16 @@ async def library() -> dict[str, list]:
     return {"parts": catalog()}
 
 
+# Plain constant: `NAME = value  # comment`
 _TOKEN_RE = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)\s*(?:#\s*(.*?))?\s*$")
+# Typed slider param: `NAME: Annotated[float, Range(min, max)] = value  # comment`
+_TYPED_RE = re.compile(
+    r"^([A-Z][A-Z0-9_]*)\s*:\s*Annotated\[[^\]]*Range\("
+    r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*(?:,[^)]*)?\)[^\]]*\]"
+    r"\s*=\s*(-?\d+(?:\.\d+)?)\s*(?:#\s*(.*?))?\s*$"
+)
+# Just the trailing `= <number>` of an assignment (to rewrite the value in place).
+_VAL_RE = re.compile(r"(=\s*)(-?\d+(?:\.\d+)?)(\s*(?:#.*)?)\s*$")
 
 
 def _design_path() -> Path:
@@ -169,31 +178,51 @@ def _design_path() -> Path:
 
 
 def _parse_tokens(text: str) -> list[dict]:
-    """Numeric constants (NAME = value  # comment) in a tokens file → list of
-    {name, value, comment}. Shared by global lib.design and a project's project.py."""
+    """Numeric params in a tokens file → {name, value, comment[, min, max]}.
+    Handles plain `NAME = value` AND typed `NAME: Annotated[float, Range(a, b)] =
+    value` (the typed form carries slider bounds). Shared by lib.design + project.py."""
     tokens = []
     for line in text.splitlines():
+        mt = _TYPED_RE.match(line)
+        if mt:
+            tokens.append(
+                {
+                    "name": mt.group(1),
+                    "value": float(mt.group(4)),
+                    "comment": (mt.group(5) or "").strip(),
+                    "min": float(mt.group(2)),
+                    "max": float(mt.group(3)),
+                }
+            )
+            continue
         m = _TOKEN_RE.match(line)
         if m:
             tokens.append({"name": m.group(1), "value": float(m.group(2)), "comment": (m.group(3) or "").strip()})
     return tokens
 
 
+def _token_name(line: str) -> str | None:
+    mt = _TYPED_RE.match(line)
+    if mt:
+        return mt.group(1)
+    m = _TOKEN_RE.match(line)
+    return m.group(1) if m else None
+
+
 def _rewrite_tokens(text: str, updates: dict) -> tuple[str, bool]:
-    """Rewrite numeric-token values in `text` from `updates` (name→value),
-    preserving comments and everything else. Returns (new_text, changed)."""
+    """Rewrite token values from `updates` (name→value) in place, preserving the
+    type annotation, comment, and formatting. Handles plain + typed forms."""
     lines = text.splitlines()
     changed = False
     for i, line in enumerate(lines):
-        m = _TOKEN_RE.match(line)
-        if not m or m.group(1) not in updates:
+        name = _token_name(line)
+        if not name or name not in updates:
             continue
-        name, comment = m.group(1), (m.group(3) or "").strip()
         try:
             val = float(updates[name])
         except (TypeError, ValueError):
             continue
-        newline = f"{name} = {val}" + (f"  # {comment}" if comment else "")
+        newline = _VAL_RE.sub(lambda mm, v=val: f"{mm.group(1)}{v}{mm.group(3)}", line)
         if newline != line:
             lines[i] = newline
             changed = True
@@ -354,7 +383,21 @@ async def run_project_target(project: str, payload: dict) -> dict:
         overrides = None
     preview = payload.get("source")
     preview_source = str(preview) if isinstance(preview, str) else None
-    return await asyncio.to_thread(run_project, project, kind, name, overrides, preview_source)
+    result = await asyncio.to_thread(run_project, project, kind, name, overrides, preview_source)
+    # Slider params for the file being edited (the run target), so the ParamsPanel
+    # works for project scenes/files just like the scratch buffer does.
+    from app.params import extract_params
+    from app.projects import read_file
+
+    rel = "project.py" if kind == "project" else f"{kind}s/{name}.py"
+    src = (overrides or {}).get(rel)
+    if src is None:
+        src = read_file(project, kind, name).get("source") or ""
+    try:
+        result["params"] = extract_params(src)
+    except Exception:
+        result["params"] = []
+    return result
 
 
 @app.post("/projects/{project}/agent")

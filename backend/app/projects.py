@@ -137,6 +137,10 @@ def create_project(name: str) -> dict:
     if not constants.is_file():
         constants.write_text(
             '"""Project-wide constants + parameters — imported by every part and scene."""\n\n'
-            "# Example: UNIT = 10.0  # base module size (mm)\n"
+            "from typing import Annotated\n\n"
+            "from lib.params import Range\n\n"
+            "# Project-wide params. A typed Range(...) gives a slider in the tokens\n"
+            "# panel; tweak it and every part + scene re-derives. Plain = also works.\n"
+            "UNIT: Annotated[float, Range(5, 40)] = 10.0  # base module size (mm)\n"
         )
     return {"ok": True, "name": ident}

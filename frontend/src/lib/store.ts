@@ -180,7 +180,12 @@ async function runProjectDoc(origin: Origin, source: string) {
   const rel = originRelPath(origin);
   const body: Record<string, unknown> = { kind: origin.kind, name: origin.name, overrides: { [rel]: source } };
   if (origin.kind === "part") {
-    body.source = `from parts.${origin.name} import ${origin.name}\nshow(${origin.name}(), name=${JSON.stringify(origin.name)})`;
+    // Run the part's OWN source directly (so error line numbers map to the editor,
+    // not to a wrapper) and then call the function to preview it. Showing the
+    // return value is guarded so a part that returns nothing (or show()s itself)
+    // still previews without a spurious show(None).
+    const n = origin.name;
+    body.source = `${source}\n\n_preview = ${n}()\nif _preview is not None:\n    show(_preview, name=${JSON.stringify(n)})\n`;
   }
   // kind "project" / "scene": run the file itself (no preview wrapper). project.py
   // is just constants — running it validates it (no geometry); scenes show().
@@ -190,12 +195,19 @@ async function runProjectDoc(origin: Origin, source: string) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const d: { ok?: boolean; shapes?: TessShapes; specs?: Spec[]; error?: string; error_line?: number | null } =
-      await r.json();
+    const d: {
+      ok?: boolean;
+      shapes?: TessShapes;
+      specs?: Spec[];
+      params?: Param[];
+      error?: string;
+      error_line?: number | null;
+    } = await r.json();
     if (d.ok && d.shapes) {
       useStore.getState().renderShapes(d.shapes, d.specs ?? []);
+      useStore.setState({ params: d.params ?? [] }); // sliders for the edited project file
     } else if (d.ok) {
-      useStore.setState({ error: null, runState: "ok" }); // ran, no geometry (project.py)
+      useStore.setState({ error: null, runState: "ok", params: d.params ?? [] }); // ran, no geometry (project.py)
     } else {
       let message = d.error ?? "run failed";
       // A part is imported as a module, so show()/require() aren't in scope there.

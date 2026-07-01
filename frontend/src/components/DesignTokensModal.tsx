@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
 
@@ -6,14 +6,16 @@ interface Token {
   name: string;
   value: number;
   comment: string;
+  min?: number;
+  max?: number;
 }
 
 type Scope = "project" | "global";
 
 // View + edit design tokens. When a project is active it edits THAT project's
-// constants (project.py) — first-class, project-scoped; otherwise the global
-// shared tokens (lib/design.py). Saving rewrites the file and re-runs so every
-// part/scene re-derives. A toggle lets you switch scope when a project is open.
+// constants (project.py) — otherwise the global lib/design.py. Typed params
+// (`Annotated[float, Range(a, b)]`) render as sliders and apply LIVE (the active
+// scene re-derives as you drag); plain constants are number inputs.
 export function DesignTokensModal({ onClose }: { onClose: () => void }) {
   const activeProject = useStore((s) => s.activeProject);
   const runNow = useStore((s) => s.runNow);
@@ -22,11 +24,10 @@ export function DesignTokensModal({ onClose }: { onClose: () => void }) {
   const [dirty, setDirty] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const applyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const endpoint = scope === "project" && activeProject ? `/projects/${activeProject}/design` : `/design`;
 
-  // Fetch tokens whenever the scope (endpoint) changes. State is only set in the
-  // async callbacks; scope switching resets dirty/loading in switchScope.
   useEffect(() => {
     let alive = true;
     fetch(`${HTTP_URL}${endpoint}`)
@@ -38,6 +39,19 @@ export function DesignTokensModal({ onClose }: { onClose: () => void }) {
     };
   }, [endpoint]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(
+    () => () => {
+      if (applyTimer.current) clearTimeout(applyTimer.current);
+    },
+    [],
+  );
+
   const switchScope = (s: Scope) => {
     if (s === scope) return;
     setScope(s);
@@ -45,29 +59,38 @@ export function DesignTokensModal({ onClose }: { onClose: () => void }) {
     setLoading(true);
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const valueOf = (t: Token) => (t.name in dirty ? dirty[t.name] : t.value);
   const hasEdits = Object.keys(dirty).length > 0;
 
-  const save = async () => {
-    if (!hasEdits) return onClose();
-    setSaving(true);
+  const applyLive = async (updates: Record<string, number>) => {
     try {
       await fetch(`${HTTP_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates: dirty }),
+        body: JSON.stringify({ updates }),
       });
-      runNow(); // recompute with the new tokens (project runner if a project file is active)
-      onClose();
+      runNow(); // re-derive the active scene/part with the new project constants
     } catch {
-      setSaving(false);
+      /* ignore */
     }
+  };
+
+  // Update a value + apply live (debounced) so dragging re-derives the model.
+  const change = (name: string, value: number) => {
+    if (Number.isNaN(value)) return;
+    const next = { ...dirty, [name]: value };
+    setDirty(next);
+    if (applyTimer.current) clearTimeout(applyTimer.current);
+    applyTimer.current = setTimeout(() => void applyLive(next), 200);
+  };
+
+  const save = async () => {
+    if (applyTimer.current) clearTimeout(applyTimer.current);
+    if (hasEdits) {
+      setSaving(true);
+      await applyLive(dirty);
+    }
+    onClose();
   };
 
   const module = scope === "project" && activeProject ? "project" : "lib.design";
@@ -99,42 +122,63 @@ export function DesignTokensModal({ onClose }: { onClose: () => void }) {
             {scope === "project" && activeProject ? (
               <>
                 Constants for project <code>{activeProject}</code>, in <code>project.py</code> — imported by every part
-                and scene. Tune them here; the project re-derives on the next run.
+                and scene. Give one a <code>Range(min, max)</code> for a slider; drag and the model re-derives live.
               </>
             ) : (
               <>
                 Shared constants every part imports from <code>lib.design</code>. Tune them here — your model and all
-                library parts re-derive on the next run.
+                library parts re-derive live.
               </>
             )}
           </p>
           {importLine && <pre className="help-code">{importLine}</pre>}
           <div className="tokens-list">
             {tokens.map((t) => (
-              <label className="token-row" key={t.name}>
+              <div className="token-row" key={t.name}>
                 <span className="token-name">{t.name}</span>
                 <span className="token-comment">{t.comment}</span>
-                <input
-                  className="token-input"
-                  type="number"
-                  step="0.1"
-                  value={valueOf(t)}
-                  onChange={(e) => setDirty((d) => ({ ...d, [t.name]: parseFloat(e.target.value) }))}
-                />
-              </label>
+                {t.min !== undefined && t.max !== undefined ? (
+                  <div className="token-slider">
+                    <input
+                      className="param-slider"
+                      type="range"
+                      min={t.min}
+                      max={t.max}
+                      step={(t.max - t.min) / 100 || 0.1}
+                      value={valueOf(t)}
+                      onChange={(e) => change(t.name, parseFloat(e.target.value))}
+                    />
+                    <input
+                      className="token-input"
+                      type="number"
+                      step="0.1"
+                      value={valueOf(t)}
+                      onChange={(e) => change(t.name, parseFloat(e.target.value))}
+                    />
+                  </div>
+                ) : (
+                  <input
+                    className="token-input"
+                    type="number"
+                    step="0.1"
+                    value={valueOf(t)}
+                    onChange={(e) => change(t.name, parseFloat(e.target.value))}
+                  />
+                )}
+              </div>
             ))}
             {loading && <div className="lib-empty">loading…</div>}
             {!loading && tokens.length === 0 && (
               <div className="lib-empty">
                 {scope === "project"
-                  ? "No numeric constants in project.py yet — add e.g. UNIT = 10.0 to it."
+                  ? "No numeric constants in project.py yet — add e.g. UNIT: Annotated[float, Range(5, 40)] = 10.0"
                   : "No tokens found."}
               </div>
             )}
           </div>
           <div className="colors-actions">
             <button className="btn btn-accept" onClick={save} disabled={saving}>
-              {saving ? "saving…" : hasEdits ? "Save & re-run" : "Close"}
+              {saving ? "saving…" : "Done"}
             </button>
           </div>
         </div>
