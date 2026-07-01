@@ -197,8 +197,17 @@ async function runProjectDoc(origin: Origin, source: string) {
     } else if (d.ok) {
       useStore.setState({ error: null, runState: "ok" }); // ran, no geometry (project.py)
     } else {
+      let message = d.error ?? "run failed";
+      // A part is imported as a module, so show()/require() aren't in scope there.
+      // If a part calls them it's really a scene — say so instead of a cryptic
+      // "line 1: NameError: name 'show' is not defined".
+      if (origin.kind === "part" && /name '(show|require)' is not defined/.test(message)) {
+        message =
+          "A part is a function that returns a shape and can't call show()/require() — those are for scenes. " +
+          "Wrap the body in `def name(...): … return part` (no show/require), or save this as a scene instead.";
+      }
       useStore.setState({
-        error: { message: d.error ?? "run failed", line: d.error_line ?? null, traceback: "" },
+        error: { message, line: d.error_line ?? null, traceback: "" },
         runState: "error",
       });
     }
