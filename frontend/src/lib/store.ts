@@ -491,23 +491,23 @@ export const useStore = create<StoreState>()(
       },
 
       openDoc: (name, source, origin) => {
-        // If this project file is already open, just focus it (don't duplicate tabs).
-        if (origin) {
-          const existing = get().docs.find(
-            (d) =>
-              d.origin &&
+        // Never duplicate a tab for the same file: match a project file by its
+        // origin (project/kind/name), or a plain file (example, opened .py) by name.
+        const existing = get().docs.find((d) =>
+          origin
+            ? d.origin &&
               d.origin.project === origin.project &&
               d.origin.kind === origin.kind &&
-              d.origin.name === origin.name,
-          );
-          if (existing) {
-            // Refresh the already-open tab with the freshly-loaded source — the
-            // file on disk may have changed (agent edit, another view), so don't
-            // resurrect the stale in-memory copy.
-            set((s) => ({ docs: s.docs.map((d) => (d.id === existing.id ? { ...d, source } : d)) }));
-            get().switchDoc(existing.id);
-            return;
-          }
+              d.origin.name === origin.name
+            : !d.origin && d.name === name,
+        );
+        if (existing) {
+          // Refresh the already-open tab with the freshly-loaded source (disk may
+          // have changed — agent edit, another view) rather than resurrecting stale
+          // text, then focus it.
+          set((s) => ({ docs: s.docs.map((d) => (d.id === existing.id ? { ...d, source } : d)) }));
+          get().switchDoc(existing.id);
+          return;
         }
         const id = makeId();
         set((s) => ({ docs: [...s.docs, { id, name: name || `part ${s.docs.length + 1}`, source, origin }] }));
