@@ -49,10 +49,15 @@ export function ProjectAgentPanel() {
     if (!activeProject) return;
     setStatus("running…");
     try {
+      // A part has no show() of its own — preview it by wrapping in show(part()).
+      const body: Record<string, unknown> = { kind: target.kind, name: target.name };
+      if (target.kind === "part" && target.name) {
+        body.source = `from parts.${target.name} import ${target.name}\nshow(${target.name}(), name=${JSON.stringify(target.name)})`;
+      }
       const r = await fetch(`${HTTP_URL}/projects/${activeProject}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: target.kind, name: target.name }),
+        body: JSON.stringify(body),
       });
       const d: { ok?: boolean; shapes?: TessShapes; specs?: Spec[]; error?: string } = await r.json();
       if (d.ok && d.shapes) {

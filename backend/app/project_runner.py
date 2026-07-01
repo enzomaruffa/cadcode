@@ -22,12 +22,21 @@ from app.projects import _file_path, _project_dir
 _RUN_LOCK = threading.Lock()
 
 
-def run_project(project: str, kind: str, name: str = "", overrides: dict[str, str] | None = None) -> dict[str, Any]:
-    """Run one project file (kind: scene|part|project) with the project importable.
+def run_project(
+    project: str,
+    kind: str,
+    name: str = "",
+    overrides: dict[str, str] | None = None,
+    preview_source: str | None = None,
+) -> dict[str, Any]:
+    """Run a project (kind: scene|part|project) with the project importable.
 
     ``overrides`` maps project-relative paths (e.g. ``"parts/bracket.py"``) to new
-    source, applied on top of what's on disk — so the agent can dry-run edits
-    without committing them. Returns the RunResult dict (ok/error/shapes/…)."""
+    source, applied on top of what's on disk — so a candidate edit can be run
+    without committing it. If ``preview_source`` is given, THAT script is run (a
+    part has no ``show()`` of its own, so previewing one means running a wrapper
+    like ``show(part())``); otherwise the target file itself is run. Returns the
+    RunResult dict (ok/error/shapes/…)."""
     src_dir = _project_dir(project)
     if not src_dir.is_dir():
         return {"ok": False, "error": f"no such project {project!r}"}
@@ -40,10 +49,10 @@ def run_project(project: str, kind: str, name: str = "", overrides: dict[str, st
     tmp = Path(tempfile.mkdtemp(prefix="cadproj_"))
     added_path = str(tmp)
     with _RUN_LOCK:
-        return _run_locked(tmp, added_path, src_dir, target, overrides, run_source)
+        return _run_locked(tmp, added_path, src_dir, target, overrides, preview_source, run_source)
 
 
-def _run_locked(tmp, added_path, src_dir, target, overrides, run_source) -> dict[str, Any]:
+def _run_locked(tmp, added_path, src_dir, target, overrides, preview_source, run_source) -> dict[str, Any]:
     try:
         shutil.copytree(src_dir, tmp, dirs_exist_ok=True)
         for rel, source in (overrides or {}).items():
@@ -51,11 +60,14 @@ def _run_locked(tmp, added_path, src_dir, target, overrides, run_source) -> dict
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(source)
 
-        target_rel = target.relative_to(src_dir)
-        target_file = tmp / target_rel
-        if not target_file.is_file():
-            return {"ok": False, "error": f"run target {target_rel} does not exist"}
-        target_source = target_file.read_text()
+        if preview_source is not None:
+            target_source = preview_source
+        else:
+            target_rel = target.relative_to(src_dir)
+            target_file = tmp / target_rel
+            if not target_file.is_file():
+                return {"ok": False, "error": f"run target {target_rel} does not exist"}
+            target_source = target_file.read_text()
 
         sys.path.insert(0, added_path)
         try:

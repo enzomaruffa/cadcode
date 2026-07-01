@@ -54,6 +54,9 @@ export interface TabDoc {
   id: string;
   name: string;
   source: string;
+  // Set when the tab is a project file — live-runs then go through the project
+  // runner (project on sys.path) instead of the single-buffer kernel.
+  origin?: { project: string; kind: string; name: string };
 }
 
 const NEW_PART_SKELETON = `from typing import Annotated
@@ -122,7 +125,7 @@ interface StoreState {
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
   newDoc: () => void;
-  openDoc: (name: string, source: string) => void;
+  openDoc: (name: string, source: string, origin?: { project: string; kind: string; name: string }) => void;
   switchDoc: (id: string) => void;
   closeDoc: (id: string) => void;
   renameDoc: (id: string, name: string) => void;
@@ -157,6 +160,47 @@ function send(type: string, payload: Record<string, unknown>) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const env: Envelope = { type, id: makeId(), payload };
     ws.send(JSON.stringify(env));
+  }
+}
+
+type Origin = { project: string; kind: string; name: string };
+
+function originRelPath(o: Origin): string {
+  return o.kind === "project" ? "project.py" : `${o.kind}s/${o.name}.py`;
+}
+
+// Live-run a project file through the project runner (project on sys.path) so its
+// `import project` / `from parts.x import x` resolve — the single-buffer kernel
+// can't do that. A part has no show() of its own, so preview it by wrapping;
+// project.py is constants only, so just confirm it imports.
+async function runProjectDoc(origin: Origin, source: string) {
+  const rel = originRelPath(origin);
+  const body: Record<string, unknown> = { kind: origin.kind, name: origin.name, overrides: { [rel]: source } };
+  if (origin.kind === "part") {
+    body.source = `from parts.${origin.name} import ${origin.name}\nshow(${origin.name}(), name=${JSON.stringify(origin.name)})`;
+  } else if (origin.kind === "project") {
+    body.source = "import project  # constants only — no geometry to render";
+  }
+  try {
+    const r = await fetch(`${HTTP_URL}/projects/${origin.project}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d: { ok?: boolean; shapes?: TessShapes; specs?: Spec[]; error?: string; error_line?: number | null } =
+      await r.json();
+    if (d.ok && d.shapes) {
+      useStore.getState().renderShapes(d.shapes, d.specs ?? []);
+    } else if (d.ok) {
+      useStore.setState({ error: null, runState: "ok" }); // ran, no geometry (project.py)
+    } else {
+      useStore.setState({
+        error: { message: d.error ?? "run failed", line: d.error_line ?? null, traceback: "" },
+        runState: "error",
+      });
+    }
+  } catch (e) {
+    useStore.setState({ error: { message: String(e), line: null, traceback: "" }, runState: "error" });
   }
 }
 
@@ -343,7 +387,10 @@ export const useStore = create<StoreState>()(
           docs: s.docs.map((d) => (d.id === s.activeDocId ? { ...d, source } : d)),
         }));
         if (debounceTimer) clearTimeout(debounceTimer);
-        const fire = () => send(EDIT, { source, debounced: true });
+        const active = get().docs.find((d) => d.id === get().activeDocId);
+        const origin = active?.origin;
+        // Project files run through the project runner; plain buffers over the WS.
+        const fire = origin ? () => void runProjectDoc(origin, source) : () => send(EDIT, { source, debounced: true });
         if (opts?.immediate) fire();
         else debounceTimer = setTimeout(fire, EDIT_DEBOUNCE_MS);
       },
@@ -354,9 +401,23 @@ export const useStore = create<StoreState>()(
         get().switchDoc(id);
       },
 
-      openDoc: (name, source) => {
+      openDoc: (name, source, origin) => {
+        // If this project file is already open, just focus it (don't duplicate tabs).
+        if (origin) {
+          const existing = get().docs.find(
+            (d) =>
+              d.origin &&
+              d.origin.project === origin.project &&
+              d.origin.kind === origin.kind &&
+              d.origin.name === origin.name,
+          );
+          if (existing) {
+            get().switchDoc(existing.id);
+            return;
+          }
+        }
         const id = makeId();
-        set((s) => ({ docs: [...s.docs, { id, name: name || `part ${s.docs.length + 1}`, source }] }));
+        set((s) => ({ docs: [...s.docs, { id, name: name || `part ${s.docs.length + 1}`, source, origin }] }));
         get().switchDoc(id);
       },
 
@@ -365,7 +426,9 @@ export const useStore = create<StoreState>()(
         if (!doc) return;
         if (debounceTimer) clearTimeout(debounceTimer);
         set({ activeDocId: id, source: doc.source, selection: null, error: null });
-        send(EDIT, { source: doc.source }); // run the part for this tab
+        if (doc.origin)
+          void runProjectDoc(doc.origin, doc.source); // project file → project runner
+        else send(EDIT, { source: doc.source }); // plain buffer → single-buffer kernel
       },
 
       closeDoc: (id) => {

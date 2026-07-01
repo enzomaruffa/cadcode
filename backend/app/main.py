@@ -304,7 +304,9 @@ async def run_project_target(project: str, payload: dict) -> dict:
     overrides = payload.get("overrides") or None
     if overrides is not None and not isinstance(overrides, dict):
         overrides = None
-    return await asyncio.to_thread(run_project, project, kind, name, overrides)
+    preview = payload.get("source")
+    preview_source = str(preview) if isinstance(preview, str) else None
+    return await asyncio.to_thread(run_project, project, kind, name, overrides, preview_source)
 
 
 @app.post("/projects/{project}/agent")

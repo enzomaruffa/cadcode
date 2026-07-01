@@ -31,7 +31,9 @@ export function FilesPanel({ onOpenProject }: { onOpenProject?: () => void }) {
     try {
       const r = await fetch(`${HTTP_URL}/projects/${project}/file?kind=${kind}&name=${encodeURIComponent(name)}`);
       const d: { source?: string } = await r.json();
-      if (typeof d.source === "string") openDoc(label, d.source);
+      // Tag the tab with its project origin so live-runs go through the project
+      // runner (project on sys.path), not the single-buffer kernel.
+      if (typeof d.source === "string") openDoc(label, d.source, { project, kind, name });
       // Make this the project agent's run/render target (scenes render; the
       // agent edits the whole project around whatever file you're on).
       setRunTarget(project, kind, name);

@@ -75,9 +75,24 @@ def _edit_map(edits: list[FileEdit]) -> dict[str, str]:
     return {e.path.strip().lstrip("/"): e.new_source for e in edits}
 
 
+def _preview_for(deps: ProjectDeps) -> str | None:
+    """A part defines a function but never calls show(), so running its file alone
+    won't exercise the body (a bug inside only fires when called). Preview it by
+    wrapping in show(part()); project.py is constants, so just import it. A scene
+    runs as-is."""
+    if deps.run_kind == "part" and deps.run_name:
+        n = deps.run_name
+        return f'from parts.{n} import {n}\nshow({n}(), name="{n}")'
+    if deps.run_kind == "project":
+        return "import project"
+    return None
+
+
 async def _run_with(deps: ProjectDeps, overrides: dict[str, str]) -> dict[str, Any]:
     """Run the run target with `overrides` applied — off-thread (blocking exec)."""
-    return await asyncio.to_thread(run_project, deps.project, deps.run_kind, deps.run_name, overrides)
+    return await asyncio.to_thread(
+        run_project, deps.project, deps.run_kind, deps.run_name, overrides, _preview_for(deps)
+    )
 
 
 def build_project_agent(model: Any | None = None) -> Agent[ProjectDeps, ProjectPatch]:
