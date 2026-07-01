@@ -15,7 +15,19 @@ import { useStore } from "./lib/store";
 
 type PaneKey = "agent" | "code" | "viewport";
 
+const MOBILE_BP = 820;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(() => window.matchMedia(`(max-width:${MOBILE_BP}px)`).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${MOBILE_BP}px)`);
+    const onChange = () => setMobile(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return mobile;
+}
 
 function Resizer({ onDrag }: { onDrag: (dx: number) => void }) {
   const onPointerDown = (e: React.PointerEvent) => {
@@ -59,11 +71,30 @@ function PaneTitle({ label, onCollapse }: { label: string; onCollapse: () => voi
   );
 }
 
+// Pane bodies — shared by both layouts so the renderer/editor stay mounted.
+const AgentBody = () => <AgentPanel />;
+const CodeBody = () => (
+  <>
+    <TabBar />
+    <EditorPane />
+    <ParamsPanel />
+  </>
+);
+const ViewportBody = () => (
+  <div className="viewport-wrap">
+    <Viewport />
+    <PrintabilityToggle />
+    <SelectionPanel />
+  </div>
+);
+
 export default function App() {
   const connect = useStore((s) => s.connect);
+  const isMobile = useIsMobile();
   const [collapsed, setCollapsed] = useState<Record<PaneKey, boolean>>({ agent: false, code: false, viewport: false });
   const [agentW, setAgentW] = useState(320);
   const [codeW, setCodeW] = useState(460);
+  const [tab, setTab] = useState<PaneKey>("viewport");
   const [showLibrary, setShowLibrary] = useState(false);
   const [showColors, setShowColors] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -82,61 +113,98 @@ export default function App() {
   const showAgentResizer = !collapsed.agent && !collapsed.code;
   const showCodeResizer = !collapsed.code && !collapsed.viewport;
 
+  const topbar = (
+    <header className="topbar">
+      <FileMenu onEditorColors={() => setShowColors(true)} />
+      <span className="brand">cadcode</span>
+      <span className="tagline">the canvas is code</span>
+      <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">
+        ⊞ library
+      </button>
+      <HistoryControls />
+    </header>
+  );
+
+  const modals = (
+    <>
+      {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
+      {showColors && <EditorColorsModal onClose={() => setShowColors(false)} />}
+    </>
+  );
+
+  // --- mobile: one pane at a time + a bottom tab bar. All panes stay mounted
+  // (visibility toggled with CSS) so the 3D camera and editor state survive. ---
+  if (isMobile) {
+    const paneClass = (k: PaneKey) =>
+      `pane mpane pane-${k === "code" ? "editor" : k}` + (tab === k ? "" : " mpane-hidden");
+    return (
+      <div className="app app-mobile">
+        {topbar}
+        <div className="panes panes-mobile">
+          <section className={paneClass("agent")}>
+            <AgentBody />
+          </section>
+          <section className={paneClass("code")}>
+            <CodeBody />
+          </section>
+          <section className={paneClass("viewport")}>
+            <ViewportBody />
+          </section>
+        </div>
+        <nav className="mobile-tabs">
+          <button className={tab === "agent" ? "on" : ""} onClick={() => setTab("agent")}>
+            agent
+          </button>
+          <button className={tab === "code" ? "on" : ""} onClick={() => setTab("code")}>
+            code
+          </button>
+          <button className={tab === "viewport" ? "on" : ""} onClick={() => setTab("viewport")}>
+            3d
+          </button>
+        </nav>
+        <StatusBar />
+        {modals}
+      </div>
+    );
+  }
+
+  // --- desktop: resizable / collapsible three-pane layout ---
   return (
     <div className="app">
-      <header className="topbar">
-        <FileMenu onEditorColors={() => setShowColors(true)} />
-        <span className="brand">cadcode</span>
-        <span className="tagline">the canvas is code</span>
-        <button className="lib-btn" onClick={() => setShowLibrary(true)} title="Browse the parts library">
-          ⊞ library
-        </button>
-        <HistoryControls />
-      </header>
-
+      {topbar}
       <div className="panes" ref={wrap}>
-        {/* AGENT */}
         {collapsed.agent ? (
           <CollapsedStrip title="agent" onExpand={() => toggle("agent")} />
         ) : (
           <section className="pane pane-agent" style={{ flex: `0 0 ${agentW}px` }}>
             <PaneTitle label="agent" onCollapse={() => toggle("agent")} />
-            <AgentPanel />
+            <AgentBody />
           </section>
         )}
         {showAgentResizer && <Resizer onDrag={(dx) => setAgentW((w) => clamp(w + dx, 240, 640))} />}
 
-        {/* CODE */}
         {collapsed.code ? (
           <CollapsedStrip title="code" onExpand={() => toggle("code")} />
         ) : (
           <section className="pane pane-editor" style={{ flex: `0 0 ${codeW}px` }}>
             <PaneTitle label="code" onCollapse={() => toggle("code")} />
-            <TabBar />
-            <EditorPane />
-            <ParamsPanel />
+            <CodeBody />
           </section>
         )}
         {showCodeResizer && <Resizer onDrag={(dx) => setCodeW((w) => clamp(w + dx, 320, 1000))} />}
 
-        {/* 3D */}
         {collapsed.viewport ? (
           <CollapsedStrip title="3d" onExpand={() => toggle("viewport")} />
         ) : (
           <section className="pane pane-viewport">
             <PaneTitle label="3d" onCollapse={() => toggle("viewport")} />
-            <div className="viewport-wrap">
-              <Viewport />
-              <PrintabilityToggle />
-              <SelectionPanel />
-            </div>
+            <ViewportBody />
           </section>
         )}
       </div>
 
       <StatusBar />
-      {showLibrary && <LibraryModal onClose={() => setShowLibrary(false)} />}
-      {showColors && <EditorColorsModal onClose={() => setShowColors(false)} />}
+      {modals}
     </div>
   );
 }
