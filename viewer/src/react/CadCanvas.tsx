@@ -29,6 +29,7 @@ export interface CadCanvasHandle {
   setSection: (axis: SectionAxis | null, offset?: number) => void;
   setMode: (mode: InteractionMode) => void;
   clearMeasure: () => void;
+  setGrid: (on: boolean) => void;
 }
 
 const presetFor = (p: RenderProfile | undefined): RenderPreset => (p === "presentation" ? PRESENTATION : TECHNICAL);
@@ -55,6 +56,7 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     setSection: (axis, offset) => viewerRef.current?.setSection(axis, offset),
     setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
     clearMeasure: () => viewerRef.current?.clearMeasure(),
+    setGrid: (on) => viewerRef.current?.setGrid(on),
   }));
 
   // Create the viewer once.

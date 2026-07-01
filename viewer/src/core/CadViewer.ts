@@ -4,6 +4,8 @@ import type { NotifyCallback, NotifyChange, PickEvent, RenderPreset, TessShapes,
 import { buildSceneGraph, type SceneGraph } from "./SceneGraph";
 import { CameraRig } from "./CameraRig";
 import { Controls } from "./Controls";
+import { Grid } from "./Grid";
+import { Gizmo } from "./Gizmo";
 import { deepDispose } from "./dispose";
 import { TECHNICAL } from "../materials/materials";
 import { LightRig } from "../materials/lighting";
@@ -41,6 +43,8 @@ export class CadViewer {
   private selection: SelectionHighlight;
   private section: Section;
   private measure: Measure;
+  private grid: Grid;
+  private gizmo: Gizmo;
   private mode: InteractionMode = "select";
 
   private framedOnce = false;
@@ -79,6 +83,8 @@ export class CadViewer {
     this.selection = new SelectionHighlight(this.scene, this.resolution);
     this.section = new Section(this.scene);
     this.measure = new Measure(this.scene, container);
+    this.grid = new Grid(this.scene);
+    this.gizmo = new Gizmo();
 
     this.controller = new InteractionController(
       this.renderer.domElement,
@@ -106,6 +112,7 @@ export class CadViewer {
     this.applyPreset(sg.bbox);
     this.section.fitTo(sg.bbox);
     this.applyClipping();
+    this.grid.fitTo(sg.bbox);
     this.controller.setTargets(sg.leaves);
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
@@ -180,6 +187,7 @@ export class CadViewer {
     if (this.preset.aoEnabled) this.post.render();
     else this.renderer.render(this.scene, this.rig.camera);
     this.measure.render(this.scene, this.rig.camera);
+    this.gizmo.render(this.renderer, this.rig.camera);
   }
 
   // --- camera ---------------------------------------------------------------
@@ -267,6 +275,11 @@ export class CadViewer {
     this.requestRender();
   }
 
+  setGrid(on: boolean): void {
+    this.grid.setEnabled(on);
+    this.requestRender();
+  }
+
   private applyClipping(): void {
     if (!this.sceneGraph) return;
     const planes = this.section.planes;
@@ -296,6 +309,8 @@ export class CadViewer {
     this.selection.dispose();
     this.section.dispose();
     this.measure.dispose();
+    this.grid.dispose();
+    this.gizmo.dispose();
     this.post.dispose();
     this.renderer.renderLists.dispose();
     this.renderer.dispose();
