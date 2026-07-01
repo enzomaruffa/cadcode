@@ -28,3 +28,7 @@ backend/.workspace/
 
 # Built SPA copied into the backend at image-build time
 backend/static/
+
+# Runtime-created projects + folder-store snapshots (user data, per-container)
+backend/projects/
+backend/.workspace/

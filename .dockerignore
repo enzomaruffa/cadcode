@@ -4,6 +4,7 @@
 **/__pycache__
 **/*.pyc
 backend/.workspace
+backend/projects
 frontend/dist
 .beads
 .playwright-mcp

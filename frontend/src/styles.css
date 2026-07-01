@@ -1021,6 +1021,119 @@ textarea {
   background: var(--surface-hover);
 }
 
+/* --- agent column: agent chat / project files toggle --- */
+.agent-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.agent-column-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0 var(--sp-1);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.agent-column-tabs button {
+  flex: 1 1 0;
+  background: none;
+  border: none;
+  border-top: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: var(--sp-2) 0;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+.agent-column-tabs button:hover {
+  color: var(--text);
+}
+.agent-column-tabs button.on {
+  color: var(--accent);
+  border-top-color: var(--accent);
+}
+
+/* --- project files panel --- */
+.files {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.files-add {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+}
+.files-add:hover {
+  border-color: var(--accent);
+}
+.files-tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--sp-2);
+}
+.files-empty {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  padding: var(--sp-3);
+  text-align: center;
+}
+.files-empty em {
+  color: var(--accent);
+  font-style: normal;
+}
+.files-project {
+  margin-bottom: var(--sp-3);
+}
+.files-project-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  padding: var(--sp-1) var(--sp-2);
+}
+.files-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-4);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+.files-file:hover {
+  color: var(--accent);
+  background: var(--surface);
+}
+
 /* --- agent panel --- */
 .agent {
   display: flex;

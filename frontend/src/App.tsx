@@ -5,7 +5,7 @@ import { Viewport } from "./components/Viewport";
 import { StatusBar } from "./components/StatusBar";
 import { SelectionPanel } from "./components/SelectionPanel";
 import { PrintabilityToggle } from "./components/PrintabilityToggle";
-import { AgentPanel } from "./components/AgentPanel";
+import { AgentColumn } from "./components/AgentColumn";
 import { ParamsPanel } from "./components/ParamsPanel";
 import { LibraryModal } from "./components/LibraryModal";
 import { EditorColorsModal } from "./components/EditorColorsModal";
@@ -74,7 +74,7 @@ function PaneTitle({ label, onCollapse }: { label: string; onCollapse: () => voi
 }
 
 // Pane bodies — shared by both layouts so the renderer/editor stay mounted.
-const AgentBody = () => <AgentPanel />;
+const AgentBody = () => <AgentColumn />;
 const CodeBody = () => (
   <>
     <TabBar />

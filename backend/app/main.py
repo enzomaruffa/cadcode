@@ -242,6 +242,45 @@ async def library_save(payload: dict) -> dict:
     return result
 
 
+# --- projects: folder-first storage (project.py + parts/ + scenes/) ---------
+
+
+@app.get("/projects")
+async def get_projects() -> dict:
+    from app.projects import list_projects
+
+    return {"projects": list_projects()}
+
+
+@app.post("/projects")
+async def new_project(payload: dict) -> dict:
+    from app.projects import create_project
+
+    return create_project(str(payload.get("name") or ""))
+
+
+@app.get("/projects/{project}/file")
+async def get_project_file(project: str, kind: str = "project", name: str = "") -> dict:
+    from app.projects import read_file
+
+    return read_file(project, kind, name)
+
+
+@app.post("/projects/{project}/file")
+async def set_project_file(project: str, payload: dict) -> dict:
+    from app.projects import write_file
+
+    result = write_file(
+        project, str(payload.get("kind") or "part"), str(payload.get("name") or ""), str(payload.get("source") or "")
+    )
+    if result.get("ok"):
+        kernel = getattr(app.state, "kernel", None)
+        reload = getattr(kernel, "reload_design", None)
+        if reload is not None:
+            await reload()  # so imports of the edited project file pick up changes
+    return result
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
