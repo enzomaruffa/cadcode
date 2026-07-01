@@ -15,6 +15,16 @@ interface AgentResult {
   error?: string;
 }
 
+// Parse a response as JSON, tolerating a non-JSON body (e.g. a proxy timeout /
+// error page) instead of throwing a raw "JSON.parse: unexpected character".
+async function readJson<T>(r: Response): Promise<T | null> {
+  try {
+    return JSON.parse(await r.text()) as T;
+  } catch {
+    return null;
+  }
+}
+
 // A project-relative path -> the {kind, name} an open tab is keyed by.
 function pathToTarget(path: string): { kind: string; name: string } {
   const p = path.replace(/^\//, "");
@@ -70,12 +80,12 @@ export function ProjectAgentPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const d: { ok?: boolean; shapes?: TessShapes; specs?: Spec[]; error?: string } = await r.json();
-      if (d.ok && d.shapes) {
+      const d = await readJson<{ ok?: boolean; shapes?: TessShapes; specs?: Spec[]; error?: string }>(r);
+      if (d?.ok && d.shapes) {
         renderShapes(d.shapes, d.specs ?? []);
         setStatus(null);
       } else {
-        setStatus(d.error ?? "run failed");
+        setStatus(d?.error ?? "run failed (server error or timeout)");
       }
     } catch (e) {
       setStatus(String(e));
@@ -104,7 +114,13 @@ export function ProjectAgentPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, run_kind: target.kind, run_name: target.name }),
       });
-      const d: AgentResult = await r.json();
+      const d = await readJson<AgentResult>(r);
+      if (!d) {
+        setStatus(
+          "The agent didn't return a valid response — it may have run too long (gateway timeout) or your session expired. Reload and try again, or split it into a smaller request.",
+        );
+        return;
+      }
       if (d.ok && d.edits?.length) {
         // Open every changed file (last-opened = first edit, so it's focused) and
         // stage the patch → the code editor shows each file's diff inline.
