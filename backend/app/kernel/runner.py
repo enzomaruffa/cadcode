@@ -95,6 +95,10 @@ def _make_namespace(
         "show_object": show_object,
         "require": require,
         "bd": _bd,
+        # Motion-sim clearance (plan §7): defined so a script's
+        # `require(min_clearance_through_motion >= CLEARANCE)` runs (and passes)
+        # in the normal technical render; the sim re-execs with the real value.
+        "min_clearance_through_motion": float("inf"),
     }
     # `from build123d import *` so scripts can use the bare API.
     star = getattr(_bd, "__all__", None) or [n for n in dir(_bd) if not n.startswith("_")]

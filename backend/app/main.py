@@ -220,6 +220,28 @@ async def set_design(payload: dict) -> dict:
     return {"ok": True, "changed": changed}
 
 
+@app.post("/library/save")
+async def library_save(payload: dict) -> dict:
+    """Save the current model as a reusable, importable library part — afterwards
+    `from lib.parts import <name>` and call `<name>(WIDTH=..., ...)`."""
+    import asyncio
+
+    from app.library_save import save_part
+
+    source = str(payload.get("source") or "")
+    name = str(payload.get("name") or "")
+    if not source.strip():
+        return {"ok": False, "error": "no source to save"}
+
+    result = await asyncio.to_thread(save_part, name, source)
+    if result.get("ok"):
+        kernel = getattr(app.state, "kernel", None)
+        reload = getattr(kernel, "reload_design", None)
+        if reload is not None:
+            await reload()  # recycle so the new part is importable on the next run
+    return result
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()

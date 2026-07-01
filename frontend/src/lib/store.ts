@@ -19,6 +19,7 @@ import {
   RUN,
   SELECT,
   SET_MODE,
+  SIMULATION,
   SOURCE,
   STATUS,
   UNDO,
@@ -34,6 +35,9 @@ import {
   type Param,
   type PhysicalPayload,
   type SelectKind,
+  type SimFrame,
+  type SimSummary,
+  type SimulationPayload,
   type Spec,
   type StatusPayload,
   type TessShapes,
@@ -92,6 +96,12 @@ interface StoreState {
   buildAxis: "Z" | "X" | "Y";
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
   physical: PhysicalPayload | null;
+  // Motion sim (transient — never persisted): the swept frames + playback cursor.
+  simFrames: SimFrame[];
+  simFrame: number;
+  simPlaying: boolean;
+  simSummary: SimSummary | null;
+  simSpecs: Spec[];
   activeLine: number | null; // editor cursor line (drives highlight glow)
   revealLine: number | null; // line to reveal in the editor (from a face click)
   presentation: boolean; // technical (false) vs presentation/PBR (true) render
@@ -117,6 +127,8 @@ interface StoreState {
   clearSelection: () => void;
   setParam: (line: number, name: string, value: number) => void;
   setViewMode: (mode: ViewMode) => void;
+  setSimFrame: (frame: number) => void;
+  toggleSimPlay: () => void;
   setBuildAxis: (axis: "Z" | "X" | "Y") => void;
   setActiveLine: (line: number | null) => void;
   setRevealLine: (line: number | null) => void;
@@ -161,6 +173,11 @@ export const useStore = create<StoreState>()(
       buildAxis: "Z",
       printStats: null,
       physical: null,
+      simFrames: [],
+      simFrame: 0,
+      simPlaying: false,
+      simSummary: null,
+      simSpecs: [],
       activeLine: null,
       revealLine: null,
       presentation: false,
@@ -248,6 +265,9 @@ export const useStore = create<StoreState>()(
               } else if (vm === "physical" && incomingMode === "technical") {
                 // Re-derive the readout on every edit while physical mode is open.
                 send(SET_MODE, { mode: "physical" });
+              } else if (vm === "motion" && incomingMode === "technical") {
+                // Re-sweep the mechanism on every edit while motion mode is open.
+                send(SET_MODE, { mode: "motion" });
               }
               break;
             }
@@ -288,6 +308,17 @@ export const useStore = create<StoreState>()(
                 source: src,
                 docs: s.docs.map((d) => (d.id === s.activeDocId ? { ...d, source: src } : d)),
               }));
+              break;
+            }
+            case SIMULATION: {
+              const p = env.payload as unknown as SimulationPayload;
+              set({
+                simFrames: p.frames ?? [],
+                simSummary: p.summary ?? null,
+                simSpecs: p.specs ?? [],
+                simFrame: 0,
+                simPlaying: (p.frames?.length ?? 0) > 1,
+              });
               break;
             }
             default:
@@ -351,15 +382,27 @@ export const useStore = create<StoreState>()(
       clearSelection: () => set({ selection: null }),
 
       setViewMode: (mode) => {
+        const prev = get().viewMode;
         set({ viewMode: mode });
+        // Leaving motion: stop playback (the technical re-render restores base pose).
+        if (prev === "motion" && mode !== "motion") set({ simPlaying: false });
         if (mode === "printability") send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
         else if (mode === "highlight") send(SET_MODE, { mode: "highlight" });
         else if (mode === "physical") send(SET_MODE, { mode: "physical" });
+        else if (mode === "motion") send(SET_MODE, { mode: "motion" });
         else {
           set({ printStats: null });
           send(SET_MODE, { mode: "technical" });
         }
       },
+
+      setSimFrame: (frame) =>
+        set((s) => {
+          const n = s.simFrames.length;
+          if (n === 0) return { simFrame: 0 };
+          return { simFrame: ((frame % n) + n) % n };
+        }),
+      toggleSimPlay: () => set((s) => ({ simPlaying: !s.simPlaying })),
 
       setActiveLine: (line) => set({ activeLine: line }),
       setRevealLine: (line) => set({ revealLine: line }),

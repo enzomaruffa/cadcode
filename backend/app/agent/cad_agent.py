@@ -62,7 +62,8 @@ Rules:
 - Compose with the parts catalog when it fits the request — call `list_library_parts` to see available parts (signatures, params, joints) and `from lib.parts import <name>` to use them, snapping joints with `connect_to` rather than guessing coordinates.
 - Make the smallest change that satisfies the request. Don't rewrite unrelated code.
 - Prefer robust build123d selectors (e.g. `faces().sort_by(Axis.Z)[-1]`, `edges().filter_by(Axis.Z)`) over fragile indices.
-- The script must call `show(part, name=..., color=...)` (or `show_object`) so the result renders. Preserve existing show() calls.
+- The script must call `show(part, name=..., color=...)` (or `show_object`) so the result renders. Preserve existing show() calls. When the user cares about mass / cost / balance, pass `material=PLA` (or PETG/ABS/RESIN from `lib.design`) to `show(...)` so the physical readout is right.
+- Moving mechanisms: give the parts build123d joints (`RevoluteJoint`/`LinearJoint`), `show(...)` each moving body under its OWN name, and define `def motion(t): ...` (t in 0..1) that drives the joints and returns `{name: <body>.location}` per moving body. A `require(min_clearance_through_motion >= CLEARANCE, ...)` line then becomes an executable motion check — call `simulate(new_source)` to confirm it swings without collision before finalizing.
 - Before finalizing, call `dry_run(new_source)` to confirm it executes and the geometry is sane. If it errors, fix it and try again.
 - If the user refers to "this" / "the selected ...", call `get_selection` — it returns the picked entity and a selector you should reuse.
 
@@ -119,6 +120,23 @@ def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
                 "stdout": result.stdout,
             }
         return {"ok": False, "error": result.error, "line": result.error_line}
+
+    @agent.tool
+    async def simulate(ctx: RunContext[CadDeps], source: str) -> dict:
+        """Sweep a candidate script's `motion(t)` and report the worst-case
+        clearance + any collision. Returns {ok, worst_clearance, collision_frames,
+        specs} — use it to check a mechanism swings without gouging itself before
+        finalizing. Errors if the script defines no `motion(t)`."""
+        result = await ctx.deps.kernel.simulate(source)
+        if "error" in result:
+            return {"ok": False, "error": result["error"]}
+        summary = result.get("summary") or {}
+        return {
+            "ok": True,
+            "worst_clearance": summary.get("min_clearance_through_motion"),
+            "collision_frames": summary.get("collision_frames"),
+            "specs": result.get("specs"),
+        }
 
     @agent.tool
     async def get_selection(ctx: RunContext[CadDeps]) -> dict | None:

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CadCanvas, type CadCanvasHandle, type PickEvent, type SectionAxis } from "@cadcode/viewer";
 import { useStore } from "../lib/store";
 
@@ -20,6 +20,36 @@ export function Viewport() {
   const activeLine = useStore((s) => s.activeLine);
   const presentation = useStore((s) => s.presentation);
   const physical = useStore((s) => s.physical);
+  const simFrames = useStore((s) => s.simFrames);
+  const simFrame = useStore((s) => s.simFrame);
+  const simPlaying = useStore((s) => s.simPlaying);
+
+  // Motion playback: advance the frame cursor ~20fps while playing.
+  useEffect(() => {
+    if (viewMode !== "motion" || !simPlaying || simFrames.length < 2) return;
+    let raf = 0;
+    let last = 0;
+    const FRAME_MS = 1000 / 20;
+    const tick = (now: number) => {
+      if (now - last >= FRAME_MS) {
+        last = now;
+        const s = useStore.getState();
+        s.setSimFrame(s.simFrame + 1);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode, simPlaying, simFrames]);
+
+  // Apply the current frame's rigid poses + flash colliding parts red.
+  useEffect(() => {
+    if (viewMode !== "motion") return;
+    const f = simFrames[simFrame];
+    if (!f) return;
+    viewerRef.current?.setPose(f.transforms);
+    viewerRef.current?.flashLeaves(f.colliding, "#f85149");
+  }, [viewMode, simFrame, simFrames, rev]);
 
   const onPick = (p: PickEvent) => {
     const st = useStore.getState();

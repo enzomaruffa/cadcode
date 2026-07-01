@@ -1,4 +1,5 @@
 import { useStore } from "../lib/store";
+import { SimulationPlayback } from "./SimulationPlayback";
 
 export function PrintabilityToggle() {
   const viewMode = useStore((s) => s.viewMode);
@@ -24,6 +25,9 @@ export function PrintabilityToggle() {
         </button>
         <button className={viewMode === "physical" ? "on" : ""} onClick={() => setViewMode("physical")}>
           physical
+        </button>
+        <button className={viewMode === "motion" ? "on" : ""} onClick={() => setViewMode("motion")}>
+          motion
         </button>
         <button
           className={presentation ? "on" : ""}
@@ -109,6 +113,7 @@ export function PrintabilityToggle() {
           </div>
         </div>
       )}
+      {viewMode === "motion" && <SimulationPlayback />}
     </div>
   );
 }

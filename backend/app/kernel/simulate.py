@@ -35,9 +35,13 @@ def _loc_to_pose(loc: Any) -> list[list[float]]:
 
 def _pairwise(objs: list[Any], leaf_ids: list[str], eps: float) -> tuple[list[str], float]:
     """Collision + min clearance among the posed objects. Returns
-    ``(colliding_leaf_ids, min_clearance)``; clearance is 0.0 on any overlap."""
+    ``(colliding_leaf_ids, min_clearance)``. Clearance is the smallest gap
+    between any two bodies; it is **negative** when any pair interpenetrates so a
+    ``require(min_clearance >= X)`` spec fails on collision but still passes when
+    parts merely touch (a jointed hinge always touches at its axis → gap 0)."""
     colliding: set[str] = set()
     min_clear = float("inf")
+    penetrating = False
     n = len(objs)
     for i in range(n):
         for j in range(i + 1, n):
@@ -52,13 +56,15 @@ def _pairwise(objs: list[Any], leaf_ids: list[str], eps: float) -> tuple[list[st
             if vol > eps:
                 colliding.add(leaf_ids[i])
                 colliding.add(leaf_ids[j])
-                min_clear = 0.0
+                penetrating = True
             else:
                 try:
                     d = float(a.distance(b))  # BRepExtrema_DistShapeShape
                     min_clear = min(min_clear, d)
                 except Exception:
                     pass
+    if penetrating:
+        return sorted(colliding), -1.0
     return sorted(colliding), (min_clear if min_clear != float("inf") else 0.0)
 
 
@@ -112,7 +118,8 @@ def simulate_motion(source: str, *, frames: int = 24, eps: float = 1e-6, sandbox
             {"t": round(t, 4), "transforms": transforms, "colliding": colliding, "min_clearance": round(min_clear, 4)}
         )
 
-    mctm = 0.0 if collision_frames else (worst_clearance if worst_clearance != float("inf") else None)
+    # Worst gap over the whole sweep — negative if the mechanism ever penetrated.
+    mctm = round(worst_clearance, 4) if worst_clearance != float("inf") else None
 
     # Pass 2 — re-exec with the real clearance so the require() spec evaluates.
     _o2, _n2, _l2, _ns2, specs2, err2 = run_scene(
@@ -125,8 +132,8 @@ def simulate_motion(source: str, *, frames: int = 24, eps: float = 1e-6, sandbox
         "frames": frames_out,
         "summary": {
             "n_frames": len(frames_out),
-            "worst_clearance": round(worst_clearance, 4) if worst_clearance != float("inf") else None,
-            "min_clearance_through_motion": round(mctm, 4) if isinstance(mctm, float) else mctm,
+            "worst_clearance": mctm,
+            "min_clearance_through_motion": mctm,
             "collision_frames": collision_frames,
         },
         "specs": specs,

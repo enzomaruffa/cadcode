@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
+import { EXAMPLES } from "../lib/examples";
 
 const EXPORTS: { fmt: string; label: string }[] = [
   { fmt: "step", label: "STEP (.step)" },
@@ -59,6 +60,27 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
     setOpen(false);
   };
 
+  const saveToLibrary = async () => {
+    const name = window.prompt("Save this part to your library as:", slug);
+    if (!name) return;
+    setBusy("lib");
+    try {
+      const res = await fetch(`${HTTP_URL}/library/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, name }),
+      });
+      const d: { ok?: boolean; name?: string; error?: string } = await res.json();
+      if (d.ok) alert(`Saved to your library as "${d.name}".\nUse it with:  from lib.parts import ${d.name}`);
+      else alert(`Save failed: ${d.error ?? "unknown error"}`);
+      setOpen(false);
+    } catch (e) {
+      alert(`Save failed: ${e}`);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const exportAs = async (fmt: string) => {
     setBusy(fmt);
     try {
@@ -103,6 +125,23 @@ export function FileMenu({ onEditorColors }: { onEditorColors: () => void }) {
           <button className="menu-item" onClick={saveSource}>
             Save .py
           </button>
+          <button className="menu-item" onClick={saveToLibrary} disabled={busy === "lib"}>
+            {busy === "lib" ? "saving…" : "Save to library…"}
+          </button>
+          <div className="menu-sep" />
+          <div className="menu-label">Examples</div>
+          {EXAMPLES.map((ex) => (
+            <button
+              key={ex.name}
+              className="menu-item"
+              onClick={() => {
+                openDoc(ex.name, ex.source);
+                setOpen(false);
+              }}
+            >
+              {ex.label}
+            </button>
+          ))}
           <div className="menu-sep" />
           <div className="menu-label">Export</div>
           {EXPORTS.map((e) => (
