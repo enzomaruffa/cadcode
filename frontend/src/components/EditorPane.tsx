@@ -22,6 +22,10 @@ export function EditorPane() {
   const pendingPatch = useStore((s) => s.pendingPatch);
   const acceptPatch = useStore((s) => s.acceptPatch);
   const rejectPatch = useStore((s) => s.rejectPatch);
+  const projectPatch = useStore((s) => s.projectPatch);
+  const acceptProjectPatch = useStore((s) => s.acceptProjectPatch);
+  const rejectProjectPatch = useStore((s) => s.rejectProjectPatch);
+  const activeOrigin = useStore((s) => s.docs.find((d) => d.id === s.activeDocId)?.origin);
 
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -109,6 +113,58 @@ export function EditorPane() {
       monaco.editor.setModelMarkers(model, "cad", []);
     }
   }, [error]);
+
+  // A pending PROJECT-agent patch: if the active tab is one of the files it
+  // changes, show that file's change as an inline diff right here (switch tabs to
+  // review the others). Accept applies the whole multi-file patch.
+  const activeRel = activeOrigin
+    ? activeOrigin.kind === "project"
+      ? "project.py"
+      : `${activeOrigin.kind}s/${activeOrigin.name}.py`
+    : null;
+  const projEdit =
+    projectPatch && activeRel ? projectPatch.edits.find((e) => e.path.replace(/^\//, "") === activeRel) : null;
+  if (projectPatch && projEdit) {
+    return (
+      <div className="editor-wrap">
+        <div className="diff-banner">
+          <span>
+            agent's change · {activeRel}
+            {projectPatch.edits.length > 1
+              ? ` (+${projectPatch.edits.length - 1} more file${projectPatch.edits.length > 2 ? "s" : ""})`
+              : ""}
+          </span>
+          <div className="diff-banner-actions">
+            <button className="btn btn-accept" onClick={acceptProjectPatch}>
+              Accept all
+            </button>
+            <button className="btn btn-reject" onClick={rejectProjectPatch}>
+              Reject
+            </button>
+          </div>
+        </div>
+        <DiffEditor
+          className="editor"
+          language="python"
+          theme="cadcode"
+          original={source}
+          modified={projEdit.new_source}
+          options={{
+            renderSideBySide: false,
+            readOnly: true,
+            fontSize: 13.5,
+            lineHeight: 21,
+            fontFamily: '"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            renderOverviewRuler: false,
+            padding: { top: 12, bottom: 12 },
+          }}
+        />
+      </div>
+    );
+  }
 
   // When the agent proposes a patch, show it as an inline diff right in the code
   // pane (current vs proposed), with accept/reject; otherwise the normal editor.

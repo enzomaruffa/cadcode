@@ -123,6 +123,9 @@ interface StoreState {
   runTarget: { kind: string; name: string } | null;
   // Auto-save status of the active PROJECT file (null for the scratch buffer).
   saveState: "saved" | "saving" | "dirty" | null;
+  // A pending multi-file agent patch — shown as an inline diff in the code editor
+  // (per edited file) until accepted/rejected.
+  projectPatch: { project: string; rationale: string; edits: { path: string; new_source: string }[] } | null;
 
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
@@ -155,6 +158,13 @@ interface StoreState {
   setActiveProject: (project: string | null) => void;
   syncProjectDoc: (project: string, kind: string, name: string, source: string) => void;
   renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
+  setProjectPatch: (patch: {
+    project: string;
+    rationale: string;
+    edits: { path: string; new_source: string }[];
+  }) => void;
+  acceptProjectPatch: () => void;
+  rejectProjectPatch: () => void;
 }
 
 let ws: WebSocket | null = null;
@@ -171,6 +181,25 @@ type Origin = { project: string; kind: string; name: string };
 
 function originRelPath(o: Origin): string {
   return o.kind === "project" ? "project.py" : `${o.kind}s/${o.name}.py`;
+}
+
+// Render a project run target (scene renders; a part is wrapped in show(part())).
+async function renderRunTarget(project: string, kind: string, name: string): Promise<void> {
+  const body: Record<string, unknown> = { kind, name };
+  if (kind === "part" && name) {
+    body.source = `from parts.${name} import ${name}\nshow(${name}(), name=${JSON.stringify(name)})`;
+  }
+  try {
+    const r = await fetch(`${HTTP_URL}/projects/${project}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d: { ok?: boolean; shapes?: TessShapes; specs?: Spec[] } = await r.json();
+    if (d.ok && d.shapes) useStore.getState().renderShapes(d.shapes, d.specs ?? []);
+  } catch {
+    /* ignore */
+  }
 }
 
 // Live-run a project file through the project runner (project on sys.path) so its
@@ -285,6 +314,7 @@ export const useStore = create<StoreState>()(
       activeProject: null,
       runTarget: null,
       saveState: null,
+      projectPatch: null,
 
       connect: () => {
         // Guard against React StrictMode's double-invoke opening two sockets.
@@ -633,6 +663,50 @@ export const useStore = create<StoreState>()(
         }),
       renderShapes: (shapes, specs) =>
         set((s) => ({ shapes, geometryRev: s.geometryRev + 1, specs, stale: false, error: null, runState: "ok" })),
+
+      setProjectPatch: (patch) => set({ projectPatch: patch }),
+      rejectProjectPatch: () => set({ projectPatch: null }),
+      acceptProjectPatch: () => {
+        const patch = get().projectPatch;
+        if (!patch) return;
+        set({ projectPatch: null });
+        void (async () => {
+          try {
+            await fetch(`${HTTP_URL}/projects/${patch.project}/apply`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ edits: patch.edits }),
+            });
+          } catch {
+            /* ignore — the write may still have landed */
+          }
+          // Push new source into any open tabs for the changed files, and the
+          // active buffer if it's one of them, so the editor shows the change.
+          set((s) => {
+            const docs = s.docs.map((d) => {
+              if (!d.origin || d.origin.project !== patch.project) return d;
+              const rel = originRelPath(d.origin);
+              const e = patch.edits.find((x) => x.path.replace(/^\//, "") === rel);
+              return e ? { ...d, source: e.new_source } : d;
+            });
+            const active = docs.find((d) => d.id === s.activeDocId);
+            return {
+              docs,
+              source: active ? active.source : s.source,
+              saveState: active?.origin ? "saved" : s.saveState,
+            };
+          });
+          // Re-render: the run target if set, else the active project doc (its
+          // source was just synced), so the viewport reflects the accepted change.
+          const st = get();
+          const rt = st.runTarget;
+          if (rt) await renderRunTarget(patch.project, rt.kind, rt.name);
+          else {
+            const active = st.docs.find((d) => d.id === st.activeDocId);
+            if (active?.origin) await runProjectDoc(active.origin, active.source);
+          }
+        })();
+      },
     }),
     {
       name: "cadcode.store",

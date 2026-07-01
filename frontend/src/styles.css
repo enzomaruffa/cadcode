@@ -1321,6 +1321,35 @@ textarea {
 .proj-agent-diff {
   height: 160px;
 }
+.proj-agent-filelist {
+  margin-bottom: var(--sp-2);
+}
+.proj-agent-filelist-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  padding: var(--sp-1) var(--sp-1) var(--sp-2);
+}
+.proj-agent-fileitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-pane);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  margin-bottom: var(--sp-1);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.proj-agent-fileitem:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
 .proj-agent-actions {
   display: flex;
   gap: var(--sp-2);

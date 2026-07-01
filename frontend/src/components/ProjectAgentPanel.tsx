@@ -1,4 +1,3 @@
-import { DiffEditor } from "@monaco-editor/react";
 import { useState } from "react";
 import { HTTP_URL } from "../config";
 import type { Spec, TessShapes } from "../lib/protocol";
@@ -8,7 +7,7 @@ interface FileEdit {
   path: string;
   new_source: string;
 }
-interface ProjectPatch {
+interface AgentResult {
   ok: boolean;
   edits?: FileEdit[];
   rationale?: string;
@@ -18,30 +17,34 @@ interface ProjectPatch {
 
 // A project-relative path -> the {kind, name} an open tab is keyed by.
 function pathToTarget(path: string): { kind: string; name: string } {
-  if (path === "project.py") return { kind: "project", name: "" };
-  const m = /^(parts|scenes)\/(.+)\.py$/.exec(path);
+  const p = path.replace(/^\//, "");
+  if (p === "project.py") return { kind: "project", name: "" };
+  const m = /^(parts|scenes)\/(.+)\.py$/.exec(p);
   if (m) return { kind: m[1] === "parts" ? "part" : "scene", name: m[2] };
-  return { kind: "part", name: path.replace(/\.py$/, "") };
+  return { kind: "part", name: p.replace(/\.py$/, "") };
 }
 
 // The whole-project multi-file agent (PROJECTS_PLAN.md). It edits many files at
-// once — a part and the scenes/parts that use it — and shows the result as a
-// per-file diff you accept as one atomic patch. Accepting writes every file and
-// re-runs the run target so the viewport updates.
+// once. The proposed change is shown as an inline diff IN THE CODE EDITOR for
+// each changed file (this panel lists them + accepts/rejects the whole patch).
 export function ProjectAgentPanel() {
   const activeProject = useStore((s) => s.activeProject);
   const runTarget = useStore((s) => s.runTarget);
   const renderShapes = useStore((s) => s.renderShapes);
-  const syncProjectDoc = useStore((s) => s.syncProjectDoc);
+  const openDoc = useStore((s) => s.openDoc);
+  const projectPatch = useStore((s) => s.projectPatch);
+  const setProjectPatch = useStore((s) => s.setProjectPatch);
+  const acceptProjectPatch = useStore((s) => s.acceptProjectPatch);
+  const rejectProjectPatch = useStore((s) => s.rejectProjectPatch);
 
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [patch, setPatch] = useState<ProjectPatch | null>(null);
-  const [originals, setOriginals] = useState<Record<string, string>>({});
   const [lastRationale, setLastRationale] = useState<string | null>(null);
+  const [originals, setOriginals] = useState<Record<string, string>>({});
 
   const target = runTarget ?? { kind: "scene", name: "" };
+  const patch = projectPatch && projectPatch.project === activeProject ? projectPatch : null;
 
   const fetchFiles = async (): Promise<Record<string, string>> => {
     if (!activeProject) return {};
@@ -58,7 +61,6 @@ export function ProjectAgentPanel() {
     if (!activeProject) return;
     setStatus("running…");
     try {
-      // A part has no show() of its own — preview it by wrapping in show(part()).
       const body: Record<string, unknown> = { kind: target.kind, name: target.name };
       if (target.kind === "part" && target.name) {
         body.source = `from parts.${target.name} import ${target.name}\nshow(${target.name}(), name=${JSON.stringify(target.name)})`;
@@ -80,12 +82,20 @@ export function ProjectAgentPanel() {
     }
   };
 
+  // Open a changed file as a tab (at its CURRENT source, so the editor diffs
+  // current → proposed) and focus it.
+  const openEdited = (originals: Record<string, string>, path: string) => {
+    const t = pathToTarget(path);
+    const label = t.kind === "project" ? `${activeProject}/project.py` : t.name;
+    openDoc(label, originals[path.replace(/^\//, "")] ?? "", { project: activeProject!, kind: t.kind, name: t.name });
+  };
+
   const ask = async () => {
     const message = prompt.trim();
     if (!message || !activeProject || busy) return;
     setBusy(true);
     setStatus("thinking…");
-    setPatch(null);
+    rejectProjectPatch();
     const files = await fetchFiles();
     setOriginals(files);
     try {
@@ -94,9 +104,12 @@ export function ProjectAgentPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, run_kind: target.kind, run_name: target.name }),
       });
-      const d: ProjectPatch = await r.json();
+      const d: AgentResult = await r.json();
       if (d.ok && d.edits?.length) {
-        setPatch(d);
+        // Open every changed file (last-opened = first edit, so it's focused) and
+        // stage the patch → the code editor shows each file's diff inline.
+        for (let i = d.edits.length - 1; i >= 0; i--) openEdited(files, d.edits[i].path);
+        setProjectPatch({ project: activeProject, rationale: d.rationale ?? "", edits: d.edits });
         setStatus(null);
         setPrompt("");
       } else {
@@ -109,39 +122,16 @@ export function ProjectAgentPanel() {
     }
   };
 
-  const accept = async () => {
-    if (!patch?.edits || !activeProject) return;
-    setStatus("applying…");
-    try {
-      await fetch(`${HTTP_URL}/projects/${activeProject}/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edits: patch.edits }),
-      });
-      // Push the new source into any open tabs for the changed files so switching
-      // to them shows the accepted change (not the stale pre-agent text).
-      for (const e of patch.edits) {
-        const t = pathToTarget(e.path);
-        syncProjectDoc(activeProject, t.kind, t.name, e.new_source);
-      }
-      setLastRationale(patch.rationale ?? null);
-      setPatch(null);
-      await runTargetNow();
-    } catch (e) {
-      setStatus(String(e));
-    }
-  };
-
-  const reject = () => {
-    setPatch(null);
-    setStatus(null);
+  const accept = () => {
+    if (patch) setLastRationale(patch.rationale || null);
+    acceptProjectPatch();
   };
 
   if (!activeProject) {
     return (
       <div className="proj-agent">
         <div className="proj-agent-empty">
-          Open a project file from <em>files</em> to work with the project agent. It edits the whole project — many
+          Pick a project (top bar) and open a file to work with the project agent. It edits the whole project — many
           parts and scenes at once.
         </div>
       </div>
@@ -166,41 +156,29 @@ export function ProjectAgentPanel() {
       {lastRationale && !patch && <div className="proj-agent-note">✓ {lastRationale}</div>}
       {status && <div className="proj-agent-status">{status}</div>}
 
-      {patch?.edits && (
+      {patch && (
         <div className="proj-agent-patch">
           <div className="proj-agent-rationale">{patch.rationale}</div>
-          {patch.edits.map((e) => (
-            <div className="proj-agent-file" key={e.path}>
-              <div className="proj-agent-file-name">
-                {e.path}
-                {!(e.path in originals) && <span className="proj-agent-new">new</span>}
-              </div>
-              <div className="proj-agent-diff">
-                <DiffEditor
-                  original={originals[e.path] ?? ""}
-                  modified={e.new_source}
-                  language="python"
-                  theme="cadcode"
-                  options={{
-                    renderSideBySide: false,
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    lineNumbers: "off",
-                    fontSize: 12,
-                    folding: false,
-                    renderOverviewRuler: false,
-                    scrollbar: { vertical: "auto", horizontal: "auto" },
-                  }}
-                />
-              </div>
+          <div className="proj-agent-filelist">
+            <div className="proj-agent-filelist-label">
+              changes {patch.edits.length} file(s) — click to review the diff:
             </div>
-          ))}
+            {patch.edits.map((e) => (
+              <button
+                key={e.path}
+                className="proj-agent-fileitem"
+                onClick={() => openEdited(originals, e.path)}
+                title="Open this file's diff in the editor"
+              >
+                {e.path.replace(/^\//, "")}
+              </button>
+            ))}
+          </div>
           <div className="proj-agent-actions">
             <button className="proj-agent-accept" onClick={accept}>
               accept all
             </button>
-            <button className="proj-agent-reject" onClick={reject}>
+            <button className="proj-agent-reject" onClick={rejectProjectPatch}>
               reject
             </button>
           </div>
