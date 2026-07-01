@@ -52,6 +52,8 @@ export class CadViewer {
   private framedOnce = false;
   private rafId: number | null = null;
   private disposed = false;
+  // Motion sim: leaves currently flashed for collision → their original color.
+  private flashed = new Map<string, THREE.Color>();
 
   // Camera-change diff bookkeeping for the notify callback.
   private last: { position?: number[]; quaternion?: number[]; zoom?: number; target?: number[] } = {};
@@ -145,6 +147,8 @@ export class CadViewer {
     this.scene.remove(this.sceneGraph.root);
     deepDispose(this.sceneGraph.root);
     this.sceneGraph = null;
+    // A rebuild resets poses + materials, so drop the flash bookkeeping.
+    this.flashed.clear();
   }
 
   // A pick either feeds the measure tool or highlights + notifies the host.
@@ -306,6 +310,42 @@ export class CadViewer {
   setPhysical(data: PhysicalData | null): void {
     if (data) this.physical.set(data);
     else this.physical.clear();
+    this.requestRender();
+  }
+
+  /** Motion sim: place each moving leaf at an absolute pose (position + quaternion,
+   * three.js order). Overwrites the baked pose — the model is tessellated once and
+   * only its rigid transforms animate. */
+  setPose(poses: Record<string, [[number, number, number], [number, number, number, number]]>): void {
+    if (!this.sceneGraph) return;
+    for (const [id, loc] of Object.entries(poses)) {
+      const leaf = this.sceneGraph.leafById.get(id);
+      if (!leaf) continue;
+      leaf.group.position.set(loc[0][0], loc[0][1], loc[0][2]);
+      leaf.group.quaternion.set(loc[1][0], loc[1][1], loc[1][2], loc[1][3]);
+    }
+    this.requestRender();
+  }
+
+  /** Motion sim: flash the given leaves (colliding parts) a color, restoring any
+   * previously-flashed leaf no longer in the set. Cheap material-color mutation. */
+  flashLeaves(ids: string[], hex: string): void {
+    if (!this.sceneGraph) return;
+    const want = new Set(ids);
+    for (const [id, orig] of [...this.flashed]) {
+      if (!want.has(id)) {
+        const leaf = this.sceneGraph.leafById.get(id);
+        if (leaf?.front) (leaf.front.material as THREE.MeshStandardMaterial).color.copy(orig);
+        this.flashed.delete(id);
+      }
+    }
+    for (const id of ids) {
+      const leaf = this.sceneGraph.leafById.get(id);
+      if (!leaf?.front) continue;
+      const mat = leaf.front.material as THREE.MeshStandardMaterial;
+      if (!this.flashed.has(id)) this.flashed.set(id, mat.color.clone());
+      mat.color.set(hex);
+    }
     this.requestRender();
   }
 

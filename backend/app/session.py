@@ -166,6 +166,25 @@ class Session:
             await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
             return
 
+        if mode == "motion":
+            result = await self.kernel.simulate(self.doc.source)
+            if "error" in result:
+                await self.send(P.STATUS, P.StatusPayload(state="error", detail=result["error"]).model_dump(), env.id)
+                return
+            # Frames carry per-leaf poses only — the model is already tessellated
+            # on screen; the viewer animates transforms, it doesn't rebuild.
+            await self.send(
+                P.SIMULATION,
+                P.SimulationPayload(
+                    frames=result.get("frames") or [],
+                    summary=result.get("summary") or {},
+                    specs=result.get("specs") or [],
+                ).model_dump(),
+                env.id,
+            )
+            await self.send(P.STATUS, P.StatusPayload(state="ok").model_dump())
+            return
+
         if mode == "highlight":
             result = await self.kernel.provenance(self.doc.source)
             if "error" in result:

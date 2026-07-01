@@ -46,6 +46,7 @@ MEASUREMENT = "measurement"
 STATUS = "status"
 HISTORY = "history"
 SOURCE = "source"  # backend pushes a new buffer (rollback / undo / redo)
+SIMULATION = "simulation"  # motion-sim frames (per-leaf poses) + summary + specs
 
 
 class Envelope(BaseModel):
@@ -118,6 +119,15 @@ class GeometryPayload(BaseModel):
     print_stats: dict[str, Any] | None = None
     # physical-properties readout (mass, com, inertia, tip, cost) for mode="physical"
     physical: dict[str, Any] | None = None
+
+
+class SimulationPayload(BaseModel):
+    """Motion-sim result: per-frame rigid poses keyed by leaf id, a run summary
+    (worst clearance / collision frames), and the clearance ``require`` specs."""
+
+    frames: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    specs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ErrorPayload(BaseModel):

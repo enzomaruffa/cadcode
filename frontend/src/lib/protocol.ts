@@ -29,6 +29,7 @@ export const AGENT_MESSAGE = "agent_message";
 export const AGENT_PATCH = "agent_patch";
 export const HISTORY = "history";
 export const SOURCE = "source";
+export const SIMULATION = "simulation";
 
 export interface Commit {
   sha: string;
@@ -109,7 +110,27 @@ export interface GeometryPayload {
   physical?: PhysicalPayload | null;
 }
 
-export type ViewMode = "technical" | "printability" | "highlight" | "physical";
+export type ViewMode = "technical" | "printability" | "highlight" | "physical" | "motion";
+
+// Motion-sim (backend app/kernel/simulate.py). A pose is [position, quatXYZW].
+export type Pose = [[number, number, number], [number, number, number, number]];
+export interface SimFrame {
+  t: number;
+  transforms: Record<string, Pose>;
+  colliding: string[];
+  min_clearance: number;
+}
+export interface SimSummary {
+  n_frames: number;
+  worst_clearance: number | null;
+  min_clearance_through_motion: number | null;
+  collision_frames: number[];
+}
+export interface SimulationPayload {
+  frames: SimFrame[];
+  summary: SimSummary;
+  specs: Spec[];
+}
 
 export interface ErrorPayload {
   message: string;

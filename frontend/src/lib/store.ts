@@ -53,15 +53,15 @@ export interface TabDoc {
 }
 
 const NEW_PART_SKELETON = `from typing import Annotated
-from build123d import BuildPart, Box
+from build123d import Box
 from lib.params import Range
 
 SIZE: Annotated[float, Range(5, 80)] = 20
 
-with BuildPart() as part:
-    Box(SIZE, SIZE, SIZE)
+# Algebra mode: build objects as expressions, combine with + - & operators.
+part = Box(SIZE, SIZE, SIZE)
 
-show(part.part, name="part", color="#9aa7ff")
+show(part, name="part", color="#9aa7ff")
 `;
 
 type Conn = "connecting" | "open" | "closed";

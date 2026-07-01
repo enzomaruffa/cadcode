@@ -3,6 +3,7 @@ import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import { applyEditorTheme, loadEditorColors } from "./editorTheme";
+import "./monaco-completions"; // build123d autocomplete provider
 
 (self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
   getWorker: () => new editorWorker(),

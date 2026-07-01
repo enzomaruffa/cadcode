@@ -22,6 +22,7 @@ class Kernel(Protocol):
     async def physical(self) -> dict: ...
     async def provenance(self, source: str, active_line: int | None = None) -> dict: ...
     async def geomdiff(self, old_source: str, new_source: str) -> dict: ...
+    async def simulate(self, source: str, frames: int = 24) -> dict: ...
     async def close(self) -> None: ...
 
 
@@ -81,6 +82,11 @@ class InProcessKernel:
         from app.kernel.geomdiff import geomdiff_shapes
 
         return await asyncio.to_thread(geomdiff_shapes, old_source, new_source)
+
+    async def simulate(self, source: str, frames: int = 24) -> dict:
+        from app.kernel.simulate import simulate_motion
+
+        return await asyncio.to_thread(lambda: simulate_motion(source, frames=frames))
 
     async def close(self) -> None:  # symmetry with the subprocess kernel
         return None

@@ -69,6 +69,10 @@ def main() -> None:
             write_frame(stdout, json.dumps(_handle_geomdiff(req)).encode())
             continue
 
+        if op == "simulate":
+            write_frame(stdout, json.dumps(_handle_simulate(req)).encode())
+            continue
+
         # op == "run"
         source = req.get("source", "")
         timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
@@ -157,6 +161,21 @@ def _handle_geomdiff(req: dict) -> dict:
         return geomdiff_shapes(req.get("old_source", ""), req.get("new_source", ""), sandbox=True)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _handle_simulate(req: dict) -> dict:
+    """Sweep the script's motion(t) under a wall-clock limit (booleans are slow,
+    so a runaway sweep gets a clean SIGALRM error instead of a parent-side kill)."""
+    from app.kernel.simulate import simulate_motion
+
+    timeout = float(req.get("timeout", DEFAULT_TIMEOUT))
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        return simulate_motion(req.get("source", ""), frames=int(req.get("frames", 24)), sandbox=True)
+    except BaseException as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 if __name__ == "__main__":
