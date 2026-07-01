@@ -13,8 +13,10 @@ services:
       CAD_AGENT_MODEL: ${CAD_AGENT_MODEL:-google:gemini-3.5-flash}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
-      # Persist git checkpoints across restarts.
+      # Persist git checkpoints + user projects across restarts/redeploys.
       - cad-workspace:/data/workspace
+      - cad-projects:/data/projects
 
 volumes:
   cad-workspace:
+  cad-projects:

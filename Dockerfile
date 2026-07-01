@@ -41,6 +41,7 @@ COPY --from=frontend /build/frontend/dist ./static
 
 ENV CAD_STATIC_DIR=/app/backend/static \
     CAD_WORKSPACE=/data/workspace \
+    CAD_PROJECTS=/data/projects \
     PORT=8000
 EXPOSE 8000
 
