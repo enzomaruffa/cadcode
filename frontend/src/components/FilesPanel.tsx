@@ -11,12 +11,15 @@ interface ProjectTree {
 
 // Starter skeletons for new project files. Parts are parametric functions that
 // RETURN an object (no show); scenes assemble + show + require.
-const PART_SKELETON = (name: string) => `from build123d import Box
+const PART_SKELETON = (name: string) => `from build123d import Box, Color
 
 # from project import UNIT, WALL  # project-wide constants
 
 def ${name}(SIZE=20.0):
-    return Box(SIZE, SIZE, SIZE)
+    part = Box(SIZE, SIZE, SIZE)
+    require(part.volume > 0, "${name} has volume")   # this part's own spec
+    part.color = Color("#9aa7ff")                     # this part's own colour
+    return part
 `;
 
 const SCENE_SKELETON = (name: string) => `from build123d import Box

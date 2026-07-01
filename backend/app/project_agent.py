@@ -38,7 +38,7 @@ Rules:
 - STRONGLY PREFER build123d **algebra mode**: build objects as expressions and combine with operators — `part = Box(80, 50, 12)`, union `a + b`, cut `a - b` (`a -= b`), intersect `a & b`, place `Pos(x, y, z) * obj` / `Rot(z=90) * obj`, modify `part = fillet(part.edges().filter_by(Axis.Z), radius=2)`. Avoid `with BuildPart()` builder mode unless a file already uses it.
 - NEVER `from build123d import *`; use explicit named imports. In parts, import project constants (`from project import ...`) rather than hard-coding numbers.
 - To reuse a part from ANOTHER project, import it absolutely: `from projects.<other_project>.parts.<name> import <name>` (that other project's own constants come with it). Use `list_library_parts` / your knowledge of the workspace to find reusable parts.
-- A part file defines a function and returns the object — it does NOT call `show()`. Only scenes call `show(...)` / `require(...)`.
+- A part file defines a function and returns the object — it does NOT call `show()` (only scenes render). A part MAY give itself a colour (`part.color = Color("#rrggbb")`, `from build123d import Color`) and declare its own specs with `require(...)` inside the function — both are picked up wherever the part is used, so a scene's bare `show(part())` shows it in the part's colour and the part's requirements travel with it.
 - Keep every existing `require(...)` spec verbatim in the run target and satisfy it by changing geometry — never weaken or delete a spec.
 - Use the loop: call `read_project` to see all files, then `dry_run` with your candidate edits to run the run target with them applied — it returns ok/error/bbox/parts/specs. Iterate (fix errors, re-run) until it runs and the specs pass BEFORE returning.
 - If the user refers to "this"/"the selected ...", call `get_selection`.
@@ -79,13 +79,11 @@ def _edit_map(edits: list[FileEdit]) -> dict[str, str]:
 def _preview_for(deps: ProjectDeps) -> str | None:
     """A part defines a function but never calls show(), so running its file alone
     won't exercise the body (a bug inside only fires when called). Preview it by
-    wrapping in show(part()); project.py is constants, so just import it. A scene
-    runs as-is."""
+    wrapping in show(part()). A scene runs as-is; project.py runs as-is too (its
+    constants execute — validating it — with no geometry)."""
     if deps.run_kind == "part" and deps.run_name:
         n = deps.run_name
         return f'from parts.{n} import {n}\nshow({n}(), name="{n}")'
-    if deps.run_kind == "project":
-        return "import project"
     return None
 
 

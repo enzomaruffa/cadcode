@@ -181,9 +181,9 @@ async function runProjectDoc(origin: Origin, source: string) {
   const body: Record<string, unknown> = { kind: origin.kind, name: origin.name, overrides: { [rel]: source } };
   if (origin.kind === "part") {
     body.source = `from parts.${origin.name} import ${origin.name}\nshow(${origin.name}(), name=${JSON.stringify(origin.name)})`;
-  } else if (origin.kind === "project") {
-    body.source = "import project  # constants only — no geometry to render";
   }
+  // kind "project" / "scene": run the file itself (no preview wrapper). project.py
+  // is just constants — running it validates it (no geometry); scenes show().
   try {
     const r = await fetch(`${HTTP_URL}/projects/${origin.project}/run`, {
       method: "POST",

@@ -14,15 +14,40 @@ re-runs and version in git (plan §6).
 
 from __future__ import annotations
 
+import builtins as _builtins
 import io
 import traceback as tb_mod
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from typing import Any
 
 from app.kernel.result import RunResult
 from app.tessellate import tessellate
 
 SOURCE_FILENAME = "<cad-source>"
+_MISSING = object()
+_REQUIRE = "require"  # attribute name (a variable, so ruff B010 stays quiet)
+
+
+@contextmanager
+def _ambient_dsl(ns: dict[str, Any]):
+    """Make ``require`` available inside imported modules (a project part is
+    imported, so it wouldn't otherwise see it) — so a part can declare its own
+    specs (`require(...)`) that get collected into the run. ``show`` stays
+    scene-only on purpose: parts return shapes, scenes render them. Runs are
+    serialized, so temporarily binding it on ``builtins`` is safe."""
+    prev = getattr(_builtins, _REQUIRE, _MISSING)
+    setattr(_builtins, _REQUIRE, ns["require"])
+    try:
+        yield
+    finally:
+        if prev is _MISSING:
+            try:
+                delattr(_builtins, _REQUIRE)
+            except AttributeError:
+                pass
+        else:
+            setattr(_builtins, _REQUIRE, prev)
+
 
 # Objects from the most recent successful run, keyed by their shape-tree id
 # (e.g. "/Group/plate"). Lets a follow-up `select` resolve a pick against the
@@ -54,6 +79,22 @@ def _resolve_material(material: Any = None, density: Any = None) -> dict[str, An
     return {"name": m.name, "density": m.density, "cost_per_kg": m.cost_per_kg, "filament_d": m.filament_d}
 
 
+def _obj_color(obj: Any) -> Any:
+    """A color a part set on the object it returns (`obj.color = Color(...)`),
+    normalized to a "#rrggbb" hex string. None if unset — so an explicit
+    ``show(..., color=...)`` always wins and uncolored parts keep the default."""
+    c = getattr(obj, "color", None)
+    if c is None:
+        return None
+    if isinstance(c, str):
+        return c
+    try:
+        t = c.to_tuple()  # build123d Color → (r, g, b, a) in 0..1
+        return f"#{round(t[0] * 255):02x}{round(t[1] * 255):02x}{round(t[2] * 255):02x}"
+    except Exception:
+        return None
+
+
 def _make_namespace(
     builtins_override: Any = None,
 ) -> tuple[dict[str, Any], list[tuple[Any, str | None, Any, dict[str, Any]]], list[dict[str, Any]]]:
@@ -68,12 +109,16 @@ def _make_namespace(
         mat = _resolve_material(material, density)
         for i, obj in enumerate(objs):
             nm = name if (name and len(objs) == 1) else (f"{name}_{i}" if name else None)
-            shown.append((obj, nm, color, mat))
+            # Fall back to a color the part set on the object itself (`obj.color =
+            # Color(...)`), so a part can OWN its color and a scene's bare
+            # `show(part())` still picks it up.
+            c = color if color is not None else _obj_color(obj)
+            shown.append((obj, nm, c, mat))
         return objs[0] if len(objs) == 1 else objs
 
     def show_object(obj: Any, name: str | None = None, options: dict | None = None, **_kw: Any) -> Any:
         opts = options or {}
-        color = opts.get("color") if opts else None
+        color = (opts.get("color") if opts else None) or _obj_color(obj)
         mat = _resolve_material(opts.get("material"), opts.get("density"))
         shown.append((obj, name, color, mat))
         return obj
@@ -191,7 +236,7 @@ def run_scene(
         ns.update(inject)
     try:
         code = compile(source, SOURCE_FILENAME, "exec")
-        with redirect_stdout(io.StringIO()):
+        with redirect_stdout(io.StringIO()), _ambient_dsl(ns):
             exec(code, ns)
     except BaseException as exc:  # noqa: BLE001
         return [], [], [], ns, specs, f"{type(exc).__name__}: {exc}"
@@ -227,7 +272,7 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     buf = io.StringIO()
     try:
         code = compile(source, SOURCE_FILENAME, "exec")
-        with redirect_stdout(buf):
+        with redirect_stdout(buf), _ambient_dsl(ns):
             exec(code, ns)
     except BaseException as exc:  # noqa: BLE001 - report every failure to the editor
         line = _error_line(exc)
