@@ -470,6 +470,10 @@ export const useStore = create<StoreState>()(
               d.origin.name === origin.name,
           );
           if (existing) {
+            // Refresh the already-open tab with the freshly-loaded source — the
+            // file on disk may have changed (agent edit, another view), so don't
+            // resurrect the stale in-memory copy.
+            set((s) => ({ docs: s.docs.map((d) => (d.id === existing.id ? { ...d, source } : d)) }));
             get().switchDoc(existing.id);
             return;
           }
