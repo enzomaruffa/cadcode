@@ -14,6 +14,13 @@ interface PlanStats {
   orientation: string;
   support_area: number;
 }
+interface PlateInfo {
+  index: number;
+  w: number;
+  d: number;
+  bed_w: number;
+  bed_d: number;
+}
 interface Plan {
   ok: boolean;
   error?: string;
@@ -21,7 +28,7 @@ interface Plan {
   specs?: Spec[];
   stats?: PlanStats[];
   fits?: boolean;
-  plate?: { w: number; d: number; bed_w: number; bed_d: number };
+  plates?: PlateInfo[];
 }
 
 // One printable item the user can add to the plate.
@@ -32,9 +39,17 @@ interface Row {
   name: string;
 }
 
-// Print plating: pick parts + quantities, choose your bed size, and the backend
-// auto-orients each part (least support) and packs the plate. The arranged plate
-// renders in the viewport and downloads as one STL/3MF for the slicer.
+type Strategy = "material" | "plates" | "fastest";
+
+const STRATEGIES: { key: Strategy; label: string; hint: string }[] = [
+  { key: "material", label: "least material", hint: "orient every part for the least support waste" },
+  { key: "plates", label: "fewest plates", hint: "orient for the smallest footprints so more parts share a bed" },
+  { key: "fastest", label: "fastest print", hint: "orient for the shortest parts — fewer layers, faster print" },
+];
+
+// Print plating: pick parts + quantities, a bed size, and a strategy; the
+// backend auto-orients each part for that objective and packs as FEW plates as
+// needed. Renders in the viewport; each plate downloads as STL/3MF.
 export function PrintModal({ onClose }: { onClose: () => void }) {
   const renderShapes = useStore((s) => s.renderShapes);
   const activeProject = useStore((s) => s.activeProject);
@@ -43,6 +58,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [bedW, setBedW] = useState(220);
   const [bedD, setBedD] = useState(220);
+  const [strategy, setStrategy] = useState<Strategy>("material");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -92,7 +108,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD } }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy }),
       });
       const d: Plan = await r.json();
       if (d.ok && d.shapes) {
@@ -108,14 +124,14 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const download = async (fmt: "stl" | "3mf") => {
+  const download = async (fmt: "stl" | "3mf", plate?: number) => {
     setBusy(true);
     setError(null);
     try {
       const r = await fetch(`${HTTP_URL}/print/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, format: fmt }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, format: fmt, plate }),
       });
       if (!r.ok) {
         setError(await r.text());
@@ -125,7 +141,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `plate.${fmt}`;
+      a.download = plate !== undefined ? `plate${plate + 1}.${fmt}` : `plate.${fmt}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -146,8 +162,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="modal-body">
           <p className="help-intro">
-            Pick parts and how many of each. Each part is auto-oriented for the <b>least support</b> and packed onto
-            your bed; the arranged plate shows in the viewport and downloads as one file for your slicer.
+            Pick parts and how many of each. Each part is auto-oriented for your chosen goal and packed onto as few
+            plates as needed; the plates render in the viewport and each downloads as one file for your slicer.
           </p>
 
           <div className="print-bed">
@@ -168,6 +184,19 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => setBedD(parseFloat(e.target.value) || 220)}
             />
             <span>mm</span>
+          </div>
+
+          <div className="scope-toggle print-strategy">
+            {STRATEGIES.map((s) => (
+              <button
+                key={s.key}
+                className={strategy === s.key ? "on" : ""}
+                onClick={() => setStrategy(s.key)}
+                title={s.hint}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
 
           <div className="print-list">
@@ -204,9 +233,27 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 </div>
               ))}
               <div className={plan.fits ? "print-fit ok" : "print-fit bad"}>
-                plate {plan.plate?.w}×{plan.plate?.d} mm on a {plan.plate?.bed_w}×{plan.plate?.bed_d} bed —{" "}
-                {plan.fits ? "fits ✓" : "does NOT fit — reduce quantities or split into two plates"}
+                {(plan.plates?.length ?? 1) === 1
+                  ? `one plate, ${plan.plates?.[0]?.w}×${plan.plates?.[0]?.d} mm on a ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed`
+                  : `split across ${plan.plates?.length} plates (each fits your ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed)`}
+                {plan.fits ? " ✓" : " — a part is bigger than the bed itself!"}
               </div>
+              {(plan.plates?.length ?? 0) > 1 &&
+                plan.plates?.map((p) => (
+                  <div className="print-plate-dl" key={p.index}>
+                    <span>
+                      plate {p.index + 1} · {p.w}×{p.d} mm
+                    </span>
+                    <span>
+                      <button className="btn" onClick={() => download("stl", p.index)} disabled={busy}>
+                        ⬇ STL
+                      </button>
+                      <button className="btn" onClick={() => download("3mf", p.index)} disabled={busy}>
+                        ⬇ 3MF
+                      </button>
+                    </span>
+                  </div>
+                ))}
             </div>
           )}
 
@@ -214,7 +261,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             <button className="btn btn-accept" onClick={doPlan} disabled={busy || items.length === 0}>
               {busy ? "working…" : plan ? "re-plan" : "plan print"}
             </button>
-            {plan?.ok && (
+            {plan?.ok && (plan.plates?.length ?? 1) === 1 && (
               <>
                 <button className="btn" onClick={() => download("stl")} disabled={busy}>
                   ⬇ STL

@@ -2385,6 +2385,23 @@ textarea {
 .print-fit.bad {
   color: var(--err);
 }
+.print-strategy {
+  margin-bottom: var(--sp-3);
+}
+.print-plate-dl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.print-plate-dl .btn {
+  padding: 2px var(--sp-2);
+  margin-left: var(--sp-1);
+  font-size: var(--fs-xs);
+}
 
 /* ===== build123d help modal ===== */
 .modal-help {

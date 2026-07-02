@@ -464,14 +464,15 @@ async def project_agent_poll(project: str, job_id: str) -> dict:
     return {"status": "running"}
 
 
-def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float]]:
+def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str]:
     items = [i for i in (payload.get("items") or []) if isinstance(i, dict)]
     bed_in = payload.get("bed") or {}
     try:
         bed = (float(bed_in.get("w") or 220), float(bed_in.get("d") or 220))
     except (TypeError, ValueError):
         bed = (220.0, 220.0)
-    return items, bed
+    strategy = str(payload.get("strategy") or "material")
+    return items, bed, strategy
 
 
 @app.get("/print/parts")
@@ -492,8 +493,8 @@ async def print_plan(payload: dict) -> dict:
 
     from app.printplan import plan_print
 
-    items, bed = _print_args(payload)
-    return await asyncio.to_thread(plan_print, items, bed)
+    items, bed, strategy = _print_args(payload)
+    return await asyncio.to_thread(plan_print, items, bed, False, strategy)
 
 
 @app.post("/print/export")
@@ -510,15 +511,21 @@ async def print_export(payload: dict) -> Response:
     media = {"stl": "model/stl", "3mf": "model/3mf", "step": "application/step"}.get(fmt)
     if media is None:
         return Response(content=f"unsupported format {fmt!r}", status_code=400)
-    items, bed = _print_args(payload)
+    items, bed, strategy = _print_args(payload)
+    plate_no = payload.get("plate")  # optional: export ONE plate of a multi-plate plan
 
     def _go() -> tuple[bytes | None, str]:
         from build123d import Compound, Mesher, export_step, export_stl
 
-        plan = plan_print(items, bed, want_objects=True)
+        plan = plan_print(items, bed, want_objects=True, strategy=strategy)
         if not plan.get("ok"):
             return None, str(plan.get("error") or "plan failed")
         objs = plan.get("_objects") or []
+        if plate_no is not None:
+            plate_of = plan.get("_plate_of") or []
+            objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
+            if not objs:
+                return None, f"plate {plate_no} is empty"
         obj = objs[0] if len(objs) == 1 else Compound(children=objs)
         with tempfile.TemporaryDirectory() as d:
             path = _P(d) / f"plate.{fmt}"
@@ -538,10 +545,11 @@ async def print_export(payload: dict) -> Response:
     data, err = await asyncio.to_thread(_go)
     if data is None:
         return Response(content=f"export failed: {err}", status_code=400)
+    fname = f"plate{int(plate_no) + 1}.{fmt}" if plate_no is not None else f"plate.{fmt}"
     return Response(
         content=data,
         media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="plate.{fmt}"'},
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 

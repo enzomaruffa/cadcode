@@ -70,24 +70,41 @@ def _orientations() -> list[tuple[str, float, float]]:
     ]
 
 
-def _orient(obj: Any) -> tuple[Any, str, float]:
-    """Pick the orientation minimizing support area (then height). Returns the
-    rotated + bed-dropped solid, the orientation label, and the support area."""
+# What each strategy optimizes when choosing a part's orientation. The metrics
+# per candidate are (support_area, height, footprint_area); the strategy is the
+# priority order of those metrics:
+#   material — least support waste (then shortest)
+#   plates   — smallest footprint so more parts share a bed (then least support)
+#   fastest  — shortest (layer count dominates print time; then least support)
+STRATEGIES = ("material", "plates", "fastest")
+
+
+def _orient(obj: Any, strategy: str = "material") -> tuple[Any, str, float]:
+    """Pick the best orientation for the strategy. Returns the rotated +
+    bed-dropped solid, the orientation label, and its support area."""
     from build123d import Pos, Rot
 
-    best: tuple[float, float, Any, str] | None = None
+    best: tuple[tuple[float, ...], Any, str, float] | None = None
     for label, rx, ry in _orientations():
         cand = Rot(X=rx, Y=ry) * obj if (rx or ry) else obj
         support, height = _support_metrics(cand)
-        key = (round(support, 3), round(height, 3))
-        if best is None or key < (best[0], best[1]):
-            best = (key[0], key[1], cand, label)
+        bb = cand.bounding_box()
+        footprint = (bb.max.X - bb.min.X) * (bb.max.Y - bb.min.Y)
+        m = {"s": round(support, 3), "h": round(height, 3), "f": round(footprint, 1)}
+        if strategy == "plates":
+            key = (m["f"], m["s"], m["h"])
+        elif strategy == "fastest":
+            key = (m["h"], m["s"], m["f"])
+        else:  # material
+            key = (m["s"], m["h"], m["f"])
+        if best is None or key < best[0]:
+            best = (key, cand, label, support)
     assert best is not None
-    oriented = best[2]
+    oriented = best[1]
     bb = oriented.bounding_box()
     # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
-    return oriented, best[3], best[0]
+    return oriented, best[2], best[3]
 
 
 def _build_part(project: str | None, name: str) -> Any:
@@ -102,34 +119,77 @@ def _build_part(project: str | None, name: str) -> Any:
     return fn()
 
 
-def _pack(
+class _Plate:
+    """One bed-sized plate being shelf-packed."""
+
+    def __init__(self) -> None:
+        self.shelves: list[list[float]] = []  # [y0, height, x_used]
+        self.y_next = 0.0
+        self.used_w = 0.0
+        self.used_d = 0.0
+
+    def try_place(self, w: float, d: float, bed: tuple[float, float]) -> tuple[float, float] | None:
+        """Place a w×d rect; returns its center (x, y) or None if it can't fit."""
+        for shelf in self.shelves:
+            y0, h, x = shelf
+            if d <= h and x + w <= bed[0]:
+                shelf[2] = x + w
+                self.used_w = max(self.used_w, x + w)
+                return (x + w / 2, y0 + d / 2)
+        if w <= bed[0] and self.y_next + d <= bed[1]:
+            y0 = self.y_next
+            self.shelves.append([y0, d, w])
+            self.y_next += d
+            self.used_w = max(self.used_w, w)
+            self.used_d = self.y_next
+            return (w / 2, y0 + d / 2)
+        return None
+
+
+def _pack_plates(
     rects: list[tuple[int, float, float]], bed: tuple[float, float]
-) -> tuple[list[tuple[float, float]], float, float, bool]:
-    """Shelf-pack rectangles (idx, w, d) onto the bed. Returns each input rect's
-    center offset (x, y), the used plate w/d, and whether everything fit the bed."""
-    order = sorted(rects, key=lambda r: (-r[2], -r[1]))  # deepest first
-    positions: dict[int, tuple[float, float]] = {}
-    bed_w = bed[0]
-    x = y = shelf_d = 0.0
-    used_w = used_d = 0.0
+) -> tuple[dict[int, tuple[int, float, float, bool]], list[_Plate], bool]:
+    """Pack rectangles (idx, w, d) onto as FEW bed-sized plates as needed
+    (first-fit-decreasing shelf packing; each rect may rotate 90° in-plane —
+    support-neutral). Returns placements {idx: (plate, cx, cy, rotated)}, the
+    plates, and whether everything genuinely fits the bed (a part too big for an
+    empty bed gets its own oversize virtual plate and flips this to False)."""
+    order = sorted(rects, key=lambda r: -max(r[1], r[2]))
+    placements: dict[int, tuple[int, float, float, bool]] = {}
+    plates: list[_Plate] = []
     fits = True
     for idx, w, d in order:
-        if x > 0 and x + w > bed_w:
-            # wrap to a new shelf
-            y += shelf_d
-            x = 0.0
-            shelf_d = 0.0
-        if w > bed_w:
-            fits = False  # part wider than the bed — place anyway on a virtual bed
-        positions[idx] = (x + w / 2, y + d / 2)
-        x += w
-        shelf_d = max(shelf_d, d)
-        used_w = max(used_w, x)
-        used_d = max(used_d, y + shelf_d)
-    if used_d > bed[1]:
-        fits = False
-    offsets = [positions[i] for i, _w, _d in rects]
-    return offsets, used_w, used_d, fits
+        # landscape-first: shelf packers waste less with the long side along X
+        orients = [(w, d, False), (d, w, True)] if w >= d else [(d, w, True), (w, d, False)]
+        placed = False
+        for pi, plate in enumerate(plates):
+            for pw, pd, rot in orients:
+                pos = plate.try_place(pw, pd, bed)
+                if pos:
+                    placements[idx] = (pi, pos[0], pos[1], rot)
+                    placed = True
+                    break
+            if placed:
+                break
+        if placed:
+            continue
+        # open a fresh plate
+        plate = _Plate()
+        plates.append(plate)
+        pi = len(plates) - 1
+        for pw, pd, rot in orients:
+            pos = plate.try_place(pw, pd, bed)
+            if pos:
+                placements[idx] = (pi, pos[0], pos[1], rot)
+                placed = True
+                break
+        if not placed:
+            # oversize — doesn't fit an empty bed in either orientation; give it
+            # a virtual plate of its own so it still renders/export
+            fits = False
+            pos = plate.try_place(w, d, (max(w, bed[0]), max(d, bed[1])))
+            placements[idx] = (pi, pos[0] if pos else w / 2, pos[1] if pos else d / 2, False)
+    return placements, plates, fits
 
 
 def print_candidates(project: str | None) -> list[dict]:
@@ -182,16 +242,19 @@ def plan_print(
     items: list[dict],
     bed: tuple[float, float] = DEFAULT_BED,
     want_objects: bool = False,
+    strategy: str = "material",
 ) -> dict:
-    """items: [{project?: str, name: str, qty: int}] → the arranged plate.
+    """items: [{project?: str, name: str, qty: int}] → the arranged plate(s).
 
-    Returns {ok, shapes, states, bbox, stats, fits, plate} (and the raw located
-    objects under "_objects" when want_objects, for export)."""
+    `strategy` picks the orientation objective (see STRATEGIES): least support
+    material, smallest footprints (fewest plates), or shortest parts (fastest).
+    Returns {ok, shapes, states, bbox, stats, fits, plates} (plus the raw located
+    objects under "_objects"/"_plate_of" when want_objects, for export)."""
     import shutil
     import tempfile
     from pathlib import Path
 
-    from build123d import Pos
+    from build123d import Pos, Rot
 
     from app.kernel.runner import _obj_color
     from app.project_runner import _RUN_LOCK, _materialize
@@ -227,7 +290,7 @@ def plan_print(
                         base = _build_part(project, name)
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
-                    solid, orientation, support = _orient(base)
+                    solid, orientation, support = _orient(base, strategy if strategy in STRATEGIES else "material")
                     oriented.append((f"{project + '/' if project else ''}{name}", solid, orientation, support, qty))
 
             # one rect per INSTANCE
@@ -243,15 +306,23 @@ def plan_print(
                     rects.append((idx, w, d))
                     inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_")))
 
-            offsets, used_w, used_d, fits = _pack(rects, bed)
+            placements, plates, fits = _pack_plates(rects, bed)
 
-            objs, names, colors = [], [], []
+            # Lay the plates out in a row along X with a visible gap, the whole
+            # row centered at the origin. Rotated instances get a free Z-spin
+            # (support-neutral) that let them pack tighter.
+            gap = 30.0
+            n_plates = len(plates)
+            row_w = n_plates * bed[0] + (n_plates - 1) * gap
+            objs, names, colors, plate_of = [], [], [], []
             for (idx, solid, name), _r in zip(inst, rects, strict=True):
-                ox, oy = offsets[idx]
-                # center the whole plate around the origin for a nice render
-                objs.append(Pos(ox - used_w / 2, oy - used_d / 2, 0) * solid)
-                names.append(name)
+                pi, cx, cy, rotated = placements[idx]
+                placed = Rot(Z=90) * solid if rotated else solid
+                px = pi * (bed[0] + gap) - row_w / 2  # this plate's left edge
+                objs.append(Pos(px + cx, cy - bed[1] / 2, 0) * placed)
+                names.append(f"plate{pi + 1}_{name}" if n_plates > 1 else name)
                 colors.append(_obj_color(solid))
+                plate_of.append(pi)
 
             shapes, states, bbox = tessellate(objs, names=names, colors=colors)
         finally:
@@ -278,8 +349,12 @@ def plan_print(
         "bbox": bbox,
         "stats": stats,
         "fits": fits,
-        "plate": {"w": round(used_w, 1), "d": round(used_d, 1), "bed_w": bed[0], "bed_d": bed[1]},
+        "plates": [
+            {"index": i, "w": round(p.used_w, 1), "d": round(p.used_d, 1), "bed_w": bed[0], "bed_d": bed[1]}
+            for i, p in enumerate(plates)
+        ],
     }
     if want_objects:
         result["_objects"] = objs
+        result["_plate_of"] = plate_of
     return result
