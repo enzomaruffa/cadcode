@@ -400,29 +400,68 @@ async def run_project_target(project: str, payload: dict) -> dict:
     return result
 
 
-@app.post("/projects/{project}/agent")
-async def project_agent(project: str, payload: dict) -> dict:
-    """Run the whole-project multi-file agent for one request. Returns
-    {ok, edits: [{path, new_source}], rationale, targets} — a multi-file patch
-    the UI reviews as per-file diffs before writing."""
+# The project agent (LLM + self-correct loop) can run for minutes — far past any
+# proxy timeout — so it runs as a background JOB the client polls. In-memory is
+# fine: single-process backend, jobs are ephemeral review artifacts.
+_AGENT_JOBS: dict[str, dict] = {}
+_AGENT_JOBS_MAX = 20
+
+
+async def _run_agent_job(job_id: str, project: str, payload: dict) -> None:
     from app.library import catalog
     from app.project_agent import run_project_agent
+
+    try:
+        try:
+            library = catalog()
+        except Exception:
+            library = []
+        result = await run_project_agent(
+            project,
+            str(payload.get("message") or "").strip(),
+            str(payload.get("run_kind") or "scene"),
+            str(payload.get("run_name") or ""),
+            selection=payload.get("selection"),
+            library=library,
+        )
+        _AGENT_JOBS[job_id] = {"status": "done", "result": result}
+    except Exception as exc:  # noqa: BLE001 - a job must always resolve
+        _AGENT_JOBS[job_id] = {"status": "done", "result": {"ok": False, "error": f"{type(exc).__name__}: {exc}"}}
+
+
+@app.post("/projects/{project}/agent")
+async def project_agent(project: str, payload: dict) -> dict:
+    """START the whole-project multi-file agent as a background job. Returns
+    {job_id}; poll GET /projects/{project}/agent/{job_id} for the result — the
+    agent iterates (dry-run/self-correct) and can outlive any gateway timeout."""
+    import asyncio
+    import uuid
 
     message = str(payload.get("message") or "").strip()
     if not message:
         return {"ok": False, "error": "empty message"}
-    try:
-        library = catalog()
-    except Exception:
-        library = []
-    return await run_project_agent(
-        project,
-        message,
-        str(payload.get("run_kind") or "scene"),
-        str(payload.get("run_name") or ""),
-        selection=payload.get("selection"),
-        library=library,
-    )
+    # Drop the oldest finished jobs so the map can't grow unbounded.
+    while len(_AGENT_JOBS) >= _AGENT_JOBS_MAX:
+        done = next((k for k, v in _AGENT_JOBS.items() if v.get("status") == "done"), None)
+        if done is None:
+            break
+        _AGENT_JOBS.pop(done, None)
+    job_id = uuid.uuid4().hex[:12]
+    _AGENT_JOBS[job_id] = {"status": "running"}
+    task = asyncio.create_task(_run_agent_job(job_id, project, payload))
+    _AGENT_JOBS[job_id]["task"] = task  # keep a reference so it isn't GC'd
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/projects/{project}/agent/{job_id}")
+async def project_agent_poll(project: str, job_id: str) -> dict:
+    """Poll an agent job: {status: running} or {status: done, result: {...}}."""
+    job = _AGENT_JOBS.get(job_id)
+    if job is None:
+        return {"status": "gone", "result": {"ok": False, "error": "job not found (server restarted?) — ask again"}}
+    if job.get("status") == "done":
+        return {"status": "done", "result": job.get("result")}
+    return {"status": "running"}
 
 
 @app.post("/projects/{project}/apply")

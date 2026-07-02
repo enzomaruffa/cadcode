@@ -109,16 +109,36 @@ export function ProjectAgentPanel() {
     const files = await fetchFiles();
     setOriginals(files);
     try {
-      const r = await fetch(`${HTTP_URL}/projects/${activeProject}/agent`, {
+      // The agent runs as a background job (it can take minutes on a hard request
+      // — LLM round-trips + dry-run self-correction), so start it and poll. Each
+      // poll is a short request, immune to gateway timeouts.
+      const start = await fetch(`${HTTP_URL}/projects/${activeProject}/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, run_kind: target.kind, run_name: target.name }),
       });
-      const d = await readJson<AgentResult>(r);
+      const started = await readJson<{ ok?: boolean; job_id?: string; error?: string }>(start);
+      if (!started?.ok || !started.job_id) {
+        setStatus(started?.error ?? "couldn't start the agent — reload and try again");
+        return;
+      }
+      const t0 = Date.now();
+      const MAX_MS = 15 * 60_000; // hard stop so an expired session can't poll forever
+      let d: AgentResult | null = null;
+      while (Date.now() - t0 < MAX_MS) {
+        await new Promise((res) => setTimeout(res, 2500));
+        const mins = Math.floor((Date.now() - t0) / 60000);
+        setStatus(`thinking${mins > 0 ? ` (${mins}m — iterating on the geometry)` : "…"}`);
+        const p = await fetch(`${HTTP_URL}/projects/${activeProject}/agent/${started.job_id}`).catch(() => null);
+        const poll = p ? await readJson<{ status?: string; result?: AgentResult }>(p) : null;
+        if (!poll) continue; // transient blip / non-JSON — keep polling
+        if (poll.status === "done" || poll.status === "gone") {
+          d = poll.result ?? null;
+          break;
+        }
+      }
       if (!d) {
-        setStatus(
-          "The agent didn't return a valid response — it may have run too long (gateway timeout) or your session expired. Reload and try again, or split it into a smaller request.",
-        );
+        setStatus("The agent didn't return a result — try again.");
         return;
       }
       if (d.ok && d.edits?.length) {
