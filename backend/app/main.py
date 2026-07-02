@@ -464,6 +464,78 @@ async def project_agent_poll(project: str, job_id: str) -> dict:
     return {"status": "running"}
 
 
+def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float]]:
+    items = [i for i in (payload.get("items") or []) if isinstance(i, dict)]
+    bed_in = payload.get("bed") or {}
+    try:
+        bed = (float(bed_in.get("w") or 220), float(bed_in.get("d") or 220))
+    except (TypeError, ValueError):
+        bed = (220.0, 220.0)
+    return items, bed
+
+
+@app.post("/print/plan")
+async def print_plan(payload: dict) -> dict:
+    """Arrange parts for printing: {items: [{project?, name, qty}], bed: {w, d}}.
+    Each part is auto-oriented to minimize support, instances are packed on the
+    bed, and the plate comes back as renderable geometry + per-part stats."""
+    import asyncio
+
+    from app.printplan import plan_print
+
+    items, bed = _print_args(payload)
+    return await asyncio.to_thread(plan_print, items, bed)
+
+
+@app.post("/print/export")
+async def print_export(payload: dict) -> Response:
+    """Re-plan the plate (deterministic for the same inputs) and export it as one
+    file for the slicer: stl | 3mf | step."""
+    import asyncio
+    import tempfile
+    from pathlib import Path as _P
+
+    from app.printplan import plan_print
+
+    fmt = str(payload.get("format") or "stl").lower()
+    media = {"stl": "model/stl", "3mf": "model/3mf", "step": "application/step"}.get(fmt)
+    if media is None:
+        return Response(content=f"unsupported format {fmt!r}", status_code=400)
+    items, bed = _print_args(payload)
+
+    def _go() -> tuple[bytes | None, str]:
+        from build123d import Compound, Mesher, export_step, export_stl
+
+        plan = plan_print(items, bed, want_objects=True)
+        if not plan.get("ok"):
+            return None, str(plan.get("error") or "plan failed")
+        objs = plan.get("_objects") or []
+        obj = objs[0] if len(objs) == 1 else Compound(children=objs)
+        with tempfile.TemporaryDirectory() as d:
+            path = _P(d) / f"plate.{fmt}"
+            try:
+                if fmt == "stl":
+                    export_stl(obj, str(path))
+                elif fmt == "step":
+                    export_step(obj, path)
+                else:
+                    m = Mesher()
+                    m.add_shape(obj)
+                    m.write(str(path))
+                return path.read_bytes(), ""
+            except Exception as exc:  # noqa: BLE001
+                return None, f"{type(exc).__name__}: {exc}"
+
+    data, err = await asyncio.to_thread(_go)
+    if data is None:
+        return Response(content=f"export failed: {err}", status_code=400)
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="plate.{fmt}"'},
+    )
+
+
 @app.post("/projects/{project}/apply")
 async def apply_project_patch(project: str, payload: dict) -> dict:
     """Write an accepted multi-file patch — a list of {path, new_source} edits —
