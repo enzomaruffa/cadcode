@@ -3,13 +3,10 @@ import { HTTP_URL } from "../config";
 import type { Spec, TessShapes } from "../lib/protocol";
 import { useStore } from "../lib/store";
 
-interface ProjectTree {
+interface Candidate {
+  project?: string | null;
   name: string;
-  parts: string[];
-  scenes: string[];
-}
-interface CatalogPart {
-  name: string;
+  label: string;
 }
 interface PlanStats {
   name: string;
@@ -50,26 +47,22 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
 
+  // Candidates are project-scoped: the active project's own parts + any part it
+  // imports (cross-project or lib). No project → everything.
   useEffect(() => {
     let alive = true;
-    Promise.all([
-      fetch(`${HTTP_URL}/projects`).then((r) => r.json()),
-      fetch(`${HTTP_URL}/library`).then((r) => r.json()),
-    ])
-      .then(([pd, ld]: [{ projects?: ProjectTree[] }, { parts?: CatalogPart[] }]) => {
+    fetch(`${HTTP_URL}/print/parts?project=${encodeURIComponent(activeProject ?? "")}`)
+      .then((r) => r.json())
+      .then((d: { parts?: Candidate[] }) => {
         if (!alive) return;
-        const out: Row[] = [];
-        for (const p of pd.projects ?? []) {
-          for (const part of p.parts) {
-            out.push({ key: `p:${p.name}:${part}`, label: `${p.name} / ${part}`, project: p.name, name: part });
-          }
-        }
-        for (const g of ld.parts ?? []) {
-          out.push({ key: `g:${g.name}`, label: `lib / ${g.name}`, name: g.name });
-        }
-        // parts of the active project first — they're the likely print targets
-        out.sort((a, b) => Number(b.project === activeProject) - Number(a.project === activeProject));
-        setRows(out);
+        setRows(
+          (d.parts ?? []).map((c) => ({
+            key: `${c.project ?? ""}:${c.name}`,
+            label: c.label,
+            project: c.project ?? undefined,
+            name: c.name,
+          })),
+        );
       })
       .catch(() => void 0);
     return () => {

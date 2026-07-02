@@ -474,6 +474,15 @@ def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float]]:
     return items, bed
 
 
+@app.get("/print/parts")
+async def print_parts(project: str = "") -> dict:
+    """Printable-part candidates for the picker — scoped to a project (its own
+    parts + parts it imports) when given, else everything."""
+    from app.printplan import print_candidates
+
+    return {"parts": print_candidates(project or None)}
+
+
 @app.post("/print/plan")
 async def print_plan(payload: dict) -> dict:
     """Arrange parts for printing: {items: [{project?, name, qty}], bed: {w, d}}.

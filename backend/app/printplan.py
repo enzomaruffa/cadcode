@@ -132,6 +132,52 @@ def _pack(
     return offsets, used_w, used_d, fits
 
 
+def print_candidates(project: str | None) -> list[dict]:
+    """The printable parts for the picker. With an active project: that
+    project's own parts + every part its files import (cross-project
+    `from projects.<p>.parts.<n> import …` and global `from lib.parts import …`).
+    Without one: everything (all projects' parts + the global catalog)."""
+    import re
+
+    from app.projects import list_projects, project_files, project_tree
+
+    out: list[dict] = []
+    seen: set[tuple[str | None, str]] = set()
+
+    def add(proj: str | None, name: str, note: str = "") -> None:
+        key = (proj, name)
+        if key in seen or not name:
+            return
+        seen.add(key)
+        label = f"{proj} / {name}" if proj else f"lib / {name}"
+        out.append({"project": proj, "name": name, "label": label + note})
+
+    if project:
+        tree = project_tree(project)
+        for name in tree["parts"]:
+            add(tree["name"], name)
+        text = "\n".join(project_files(project).values())
+        for m in re.finditer(r"from\s+projects\.(\w+)\.parts\.(\w+)\s+import", text):
+            add(m.group(1), m.group(2), " (imported)")
+        for m in re.finditer(r"from\s+lib\.parts\s+import\s+([\w ,]+)", text):
+            for n in m.group(1).split(","):
+                add(None, n.strip(), " (imported)")
+        for m in re.finditer(r"from\s+lib\.parts\.(\w+)\s+import", text):
+            add(None, m.group(1), " (imported)")
+    else:
+        for t in list_projects():
+            for name in t["parts"]:
+                add(t["name"], name)
+        try:
+            from app.library import catalog
+
+            for p in catalog():
+                add(None, p["name"])
+        except Exception:
+            pass
+    return out
+
+
 def plan_print(
     items: list[dict],
     bed: tuple[float, float] = DEFAULT_BED,
@@ -170,13 +216,19 @@ def plan_print(
                 sys.path.insert(0, added)
 
             oriented: list[tuple[str, Any, str, float, int]] = []  # (label, solid, orientation, support, qty)
-            for project, name, qty in wanted:
-                try:
-                    base = _build_part(project, name)
-                except Exception as exc:  # noqa: BLE001
-                    return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
-                solid, orientation, support = _orient(base)
-                oriented.append((f"{project + '/' if project else ''}{name}", solid, orientation, support, qty))
+            # Parts may declare specs with the ambient `require(...)` — bind the
+            # DSL while building (same as any run), else such parts NameError.
+            from app.kernel.runner import _ambient_dsl, _make_namespace
+
+            ns, _shown, _specs = _make_namespace()
+            with _ambient_dsl(ns):
+                for project, name, qty in wanted:
+                    try:
+                        base = _build_part(project, name)
+                    except Exception as exc:  # noqa: BLE001
+                        return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
+                    solid, orientation, support = _orient(base)
+                    oriented.append((f"{project + '/' if project else ''}{name}", solid, orientation, support, qty))
 
             # one rect per INSTANCE
             rects: list[tuple[int, float, float]] = []
