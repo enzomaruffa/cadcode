@@ -464,7 +464,7 @@ async def project_agent_poll(project: str, job_id: str) -> dict:
     return {"status": "running"}
 
 
-def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str]:
+def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str, bool]:
     items = [i for i in (payload.get("items") or []) if isinstance(i, dict)]
     bed_in = payload.get("bed") or {}
     try:
@@ -472,7 +472,9 @@ def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str]:
     except (TypeError, ValueError):
         bed = (220.0, 220.0)
     strategy = str(payload.get("strategy") or "material")
-    return items, bed, strategy
+    supports = payload.get("supports")
+    supports = True if supports is None else bool(supports)  # default: auto-support on
+    return items, bed, strategy, supports
 
 
 @app.get("/print/parts")
@@ -502,8 +504,8 @@ async def print_plan(payload: dict) -> dict:
 
     from app.printplan import plan_print
 
-    items, bed, strategy = _print_args(payload)
-    return await asyncio.to_thread(plan_print, items, bed, False, strategy)
+    items, bed, strategy, supports = _print_args(payload)
+    return await asyncio.to_thread(plan_print, items, bed, False, strategy, supports)
 
 
 @app.post("/print/slice")
@@ -518,30 +520,33 @@ async def print_slice(payload: dict) -> dict:
 
     if not slicer_available():
         return {"ok": False, "error": "prusa-slicer isn't installed on this server"}
-    items, bed, strategy = _print_args(payload)
+    items, bed, strategy, supports = _print_args(payload)
     plate_no = payload.get("plate")
 
     def _go() -> dict:
-        plan = plan_print(items, bed, want_objects=True, strategy=strategy)
+        plan = plan_print(items, bed, want_objects=True, strategy=strategy, supports=supports)
         if not plan.get("ok"):
             return {"ok": False, "error": plan.get("error") or "plan failed"}
         objs = plan.get("_objects") or []
         if plate_no is not None:
             plate_of = plan.get("_plate_of") or []
             objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
-        result = slice_minutes(objs, bed)
+        result = slice_minutes(objs, bed, supports=supports)
         if result is None:
             return {"ok": False, "error": "slicing failed"}
         # Teach the instant estimator: pair this plate's features with the
-        # slicer's true minutes and refit the calibration coefficients.
-        try:
-            from app.kernel.calibration import record
-            from app.kernel.print_time import mesh_of, plate_features
+        # slicer's true minutes and refit the calibration coefficients. Only
+        # supported runs feed calibration (the estimator's default weights
+        # assume support is on, matching how these features were fit).
+        if supports:
+            try:
+                from app.kernel.calibration import record
+                from app.kernel.print_time import mesh_of, plate_features
 
-            feats = plate_features([mesh_of(o) for o in objs])
-            record(feats, result["minutes"])
-        except Exception:
-            pass  # calibration is best-effort
+                feats = plate_features([mesh_of(o) for o in objs])
+                record(feats, result["minutes"])
+            except Exception:
+                pass  # calibration is best-effort
         return {"ok": True, "plate": plate_no, **result}
 
     return await asyncio.to_thread(_go)
@@ -561,13 +566,13 @@ async def print_export(payload: dict) -> Response:
     media = {"stl": "model/stl", "3mf": "model/3mf", "step": "application/step"}.get(fmt)
     if media is None:
         return Response(content=f"unsupported format {fmt!r}", status_code=400)
-    items, bed, strategy = _print_args(payload)
+    items, bed, strategy, supports = _print_args(payload)
     plate_no = payload.get("plate")  # optional: export ONE plate of a multi-plate plan
 
     def _go() -> tuple[bytes | None, str]:
         from build123d import Compound, Mesher, export_step, export_stl
 
-        plan = plan_print(items, bed, want_objects=True, strategy=strategy)
+        plan = plan_print(items, bed, want_objects=True, strategy=strategy, supports=supports)
         if not plan.get("ok"):
             return None, str(plan.get("error") or "plan failed")
         objs = plan.get("_objects") or []

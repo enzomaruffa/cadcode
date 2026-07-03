@@ -47,21 +47,29 @@ def _orientations() -> list[tuple[str, float, float]]:
 STRATEGIES = ("material", "plates", "fastest")
 
 
-def _orient(obj: Any, strategy: str = "material") -> tuple[Any, str, float, float]:
+def _orient(obj: Any, strategy: str = "material", supports: bool = True) -> tuple[Any, str, float, float]:
     """Pick the best orientation for the strategy — scored on the tessellated
     mesh (rotating vertices is free; no re-tessellation per candidate). Returns
-    (rotated + bed-dropped solid, label, support area, estimated minutes)."""
+    (rotated + bed-dropped solid, label, support area, estimated minutes).
+
+    `supports` reflects the print setting: even without support material we still
+    prefer orientations with less overhang (they print cleaner), so support area
+    keeps ranking; but the time estimate drops the support term when off."""
     from build123d import Pos, Rot
 
     from app.kernel.print_time import estimate_minutes, mesh_of, rotate_mesh, support_area
 
+    # Supportless prints don't extrude support material — zero its density so the
+    # time estimate drops the support term (overhang area is still measured below
+    # for orientation ranking + display).
+    prof = None if supports else {"support_density": 0.0}
     verts, tris = mesh_of(obj)
     best: tuple[tuple[float, ...], str, float, float, float, float] | None = None
     for label, rx, ry in _orientations():
         v = rotate_mesh(verts, rx, ry)
         v = v - [0.0, 0.0, float(v[:, 2].min())]  # drop onto the bed
         sup = support_area(v, tris)
-        minutes = estimate_minutes(v, tris, support_mm2=sup)["minutes"]
+        minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
         footprint = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
         m = {"s": round(sup, 1), "t": minutes, "f": round(footprint, 1)}
         if strategy == "plates":
@@ -83,12 +91,16 @@ def _orient(obj: Any, strategy: str = "material") -> tuple[Any, str, float, floa
 
 def _build_part(project: str | None, name: str) -> Any:
     """Build one part instance: a project part (`projects.<p>.parts.<name>`) or a
-    global library part (`lib.parts.<name>`). Caller holds the run lock and has
-    the materialized workspace on sys.path for project parts."""
+    global library part. Caller holds the run lock and has the materialized
+    workspace on sys.path for project parts.
+
+    Library parts live as functions in the `lib.parts` package (`lib/parts/
+    __init__.py`), not as per-part submodules, so import the package and pull the
+    function off it; project parts are per-name submodules."""
     if project:
         mod = __import__(f"projects.{project}.parts.{name}", fromlist=[name])
     else:
-        mod = __import__(f"lib.parts.{name}", fromlist=[name])
+        mod = __import__("lib.parts", fromlist=[name])
     fn = getattr(mod, name)
     return fn()
 
@@ -217,11 +229,14 @@ def plan_print(
     bed: tuple[float, float] = DEFAULT_BED,
     want_objects: bool = False,
     strategy: str = "material",
+    supports: bool = True,
 ) -> dict:
     """items: [{project?: str, name: str, qty: int}] → the arranged plate(s).
 
     `strategy` picks the orientation objective (see STRATEGIES): least support
     material, smallest footprints (fewest plates), or shortest parts (fastest).
+    `supports` toggles support material (auto-placed where overhangs need it) —
+    it drops the support time from the estimate and, downstream, from the slice.
     Returns {ok, shapes, states, bbox, stats, fits, plates} (plus the raw located
     objects under "_objects"/"_plate_of" when want_objects, for export)."""
     import shutil
@@ -266,7 +281,7 @@ def plan_print(
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
                     solid, orientation, support, minutes = _orient(
-                        base, strategy if strategy in STRATEGIES else "material"
+                        base, strategy if strategy in STRATEGIES else "material", supports
                     )
                     oriented.append(
                         (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty)
@@ -314,12 +329,16 @@ def plan_print(
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
 
+    # A part "needs support" when its best orientation still leaves meaningful
+    # overhang area — surfaced so the user sees why a part costs what it does.
+    _SUP_MIN = 25.0  # mm² — below this, overhang is negligible (chamfers etc.)
     stats = [
         {
             "name": label,
             "qty": qty,
             "orientation": orientation,
             "support_area": round(support, 1),
+            "needs_support": support > _SUP_MIN,
             "est_min": round(minutes, 1),
         }
         for label, _s, orientation, support, minutes, qty in oriented
@@ -330,6 +349,8 @@ def plan_print(
         "states": states,
         "bbox": bbox,
         "stats": stats,
+        "supports": supports,
+        "any_needs_support": any(s["needs_support"] for s in stats),
         "fits": fits,
         "plates": [
             {

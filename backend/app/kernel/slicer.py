@@ -25,10 +25,15 @@ def slicer_available() -> bool:
 
 
 def slice_minutes(
-    objs: list[Any], bed: tuple[float, float] = (220.0, 220.0), timeout_s: int = 180
-) -> dict[str, float] | None:
-    """Slice the given solids as ONE plate; returns {minutes, filament_cm3} or
-    None (no slicer / slicing failed). Runs PrusaSlicer headless.
+    objs: list[Any],
+    bed: tuple[float, float] = (220.0, 220.0),
+    timeout_s: int = 180,
+    supports: bool = True,
+) -> dict[str, Any] | None:
+    """Slice the given solids as ONE plate; returns {minutes, filament_cm3,
+    supported} or None (no slicer / slicing failed). Runs PrusaSlicer headless.
+    `supports=True` lets PrusaSlicer auto-add support material where overhangs
+    need it; `False` prints supportless (overhangs at the user's own risk).
 
     Our plates are centered on the origin, but PrusaSlicer's bed starts at the
     corner (0,0) and defaults to ~200mm — off-bed objects "slice" to an empty
@@ -60,11 +65,13 @@ def slice_minutes(
             "1.75",
             "--bed-shape",
             bed_shape,
-            "--support-material",  # match reality: overhangs get support
             "--output",
             str(gcode),
             str(stl),
         ]
+        if supports:
+            # auto-add support only where overhangs need it (match reality)
+            cmd.insert(-3, "--support-material")
         try:
             subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=True)
         except (subprocess.SubprocessError, OSError):
@@ -79,4 +86,9 @@ def slice_minutes(
     days, hours, mins, secs = (int(g) if g else 0 for g in m.groups())
     minutes = days * 1440 + hours * 60 + mins + secs / 60.0
     fm = _FILAMENT_RE.search(text)
-    return {"minutes": round(minutes, 1), "filament_cm3": float(fm.group(1)) if fm else 0.0}
+    supported = supports and ("; support_material = 1" in text or "support material" in text.lower())
+    return {
+        "minutes": round(minutes, 1),
+        "filament_cm3": round(float(fm.group(1)), 2) if fm else 0.0,
+        "supported": bool(supported),
+    }

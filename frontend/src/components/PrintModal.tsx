@@ -13,6 +13,7 @@ interface PlanStats {
   qty: number;
   orientation: string;
   support_area: number;
+  needs_support?: boolean;
   est_min?: number;
 }
 interface PlateInfo {
@@ -29,15 +30,29 @@ interface Plan {
   shapes?: TessShapes;
   specs?: Spec[];
   stats?: PlanStats[];
+  supports?: boolean; // whether this plan was arranged with support material on
+  any_needs_support?: boolean; // some part still overhangs at its best orientation
   fits?: boolean;
   plates?: PlateInfo[];
   slicer?: boolean; // prusa-slicer available server-side for exact times
+}
+
+// A finished slice: exact time + filament + whether the slicer actually laid support.
+interface SliceResult {
+  minutes: number;
+  filament_cm3?: number;
+  supported?: boolean;
 }
 
 function fmtMin(min: number | undefined): string {
   if (min == null) return "";
   if (min < 60) return `${Math.round(min)}min`;
   return `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, "0")}m`;
+}
+
+function fmtCm3(v: number | undefined): string {
+  if (v == null || v <= 0) return "";
+  return `${v.toFixed(1)} cm³`;
 }
 
 // One printable item the user can add to the plate.
@@ -68,11 +83,12 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [bedW, setBedW] = useState(220);
   const [bedD, setBedD] = useState(220);
   const [strategy, setStrategy] = useState<Strategy>("material");
+  const [supports, setSupports] = useState(true); // auto-add support material where overhangs need it
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
-  // Exact slicer times, keyed by plate index (-1 = whole single plate).
-  const [exact, setExact] = useState<Record<number, number | "working">>({});
+  // Exact slicer results (time + filament), keyed by plate index (-1 = whole single plate).
+  const [exact, setExact] = useState<Record<number, SliceResult | "working">>({});
   const [calN, setCalN] = useState(0); // how many real slices the estimator learned from
   const planToken = useRef(0); // bump per plan → in-flight background slices from an old plan are dropped
 
@@ -122,6 +138,15 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const bump = (key: string, delta: number) =>
     setQty((q) => ({ ...q, [key]: Math.max(0, Math.min(99, (q[key] ?? 0) + delta)) }));
 
+  // Changing supports makes the current slicer numbers stale — drop them (and any
+  // in-flight background slice) so the estimate shows until the user re-plans.
+  const changeSupports = (on: boolean) => {
+    if (on === supports) return;
+    setSupports(on);
+    planToken.current++;
+    setExact({});
+  };
+
   const doPlan = async () => {
     if (!items.length || busy) return;
     setBusy(true);
@@ -130,7 +155,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports }),
       });
       const d: Plan = await r.json();
       if (d.ok && d.shapes) {
@@ -164,13 +189,17 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/slice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, plate }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, plate }),
       });
-      const d: { ok?: boolean; minutes?: number; error?: string } = await r.json();
+      const d: { ok?: boolean; minutes?: number; filament_cm3?: number; supported?: boolean; error?: string } =
+        await r.json();
       if (!live()) return; // a newer plan superseded this slice
       if (d.ok && d.minutes != null) {
-        setExact((e) => ({ ...e, [key]: d.minutes! }));
-        refreshCal(); // this slice just taught the estimator
+        setExact((e) => ({
+          ...e,
+          [key]: { minutes: d.minutes!, filament_cm3: d.filament_cm3, supported: d.supported },
+        }));
+        if (supports) refreshCal(); // supported slices teach the estimator
       } else {
         setExact((e) => {
           const { [key]: _drop, ...rest } = e;
@@ -212,7 +241,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, format: fmt, plate }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, format: fmt, plate }),
       });
       if (!r.ok) {
         setError(await r.text());
@@ -232,6 +261,37 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // Time + filament for a plate: "slicing…" while working, then the exact slicer
+  // number (with filament, and a note when support was actually laid), else the
+  // instant "~estimate" with an on-demand "exact?" button.
+  const renderTime = (key: number, estMin: number) => {
+    const res = exact[key];
+    if (res === "working") return <>slicing…</>;
+    if (res != null) {
+      return (
+        <>
+          {fmtMin(res.minutes)} (slicer)
+          {res.filament_cm3 ? ` · ${fmtCm3(res.filament_cm3)}` : ""}
+          {res.supported ? " · incl. support" : ""}
+        </>
+      );
+    }
+    return (
+      <>
+        ~{fmtMin(estMin)}
+        {plan?.slicer && (
+          <button
+            className="print-exact"
+            onClick={() => sliceExact(key < 0 ? undefined : key)}
+            title="Run PrusaSlicer for the exact time"
+          >
+            exact?
+          </button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal-help" onClick={(e) => e.stopPropagation()}>
@@ -246,7 +306,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             Pick parts and how many of each. Each part is auto-oriented for your chosen goal and packed onto as few
             plates as needed; the plates render in the viewport and each downloads as one file for your slicer. Times
             show a quick estimate instantly, then the <b>real slicer</b> runs in the background and replaces them with
-            exact numbers.{calN > 0 ? ` Estimates are self-calibrating (${calN} slices learned so far).` : ""}
+            exact numbers (including filament and any support material).
+            {calN > 0 ? ` Estimates are self-calibrating (${calN} slices learned so far).` : ""}
           </p>
 
           <div className="print-bed">
@@ -282,6 +343,23 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             ))}
           </div>
 
+          <div className="scope-toggle print-strategy">
+            <button
+              className={supports ? "on" : ""}
+              onClick={() => changeSupports(true)}
+              title="Let the slicer auto-add support material wherever overhangs need it (safe default)."
+            >
+              auto supports
+            </button>
+            <button
+              className={!supports ? "on" : ""}
+              onClick={() => changeSupports(false)}
+              title="Print without support — cleaner & faster, but overhangs may sag. Parts are still oriented to minimize overhang."
+            >
+              no supports
+            </button>
+          </div>
+
           <div className="print-list">
             {rows.length === 0 && (
               <div className="lib-empty">No parts yet — save a part to a project or the library first.</div>
@@ -311,7 +389,11 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                   </span>
                   <span>
                     {s.orientation === "as-is" ? "as modeled" : `rotated ${s.orientation}`}
-                    {s.support_area === 0 ? " · no support 🎉" : ` · ~${s.support_area} mm² support`}
+                    {s.support_area === 0
+                      ? " · no overhang 🎉"
+                      : plan.supports === false
+                        ? ` · ⚠ ${s.support_area} mm² overhang, unsupported`
+                        : ` · ~${s.support_area} mm² support`}
                     {s.est_min != null ? ` · ~${fmtMin(s.est_min)} each` : ""}
                   </span>
                 </div>
@@ -324,20 +406,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 {(plan.plates?.length ?? 1) === 1 && plan.plates?.[0]?.est_min != null && (
                   <>
                     {" · "}
-                    {exact[-1] === "working"
-                      ? "slicing…"
-                      : exact[-1] != null
-                        ? `${fmtMin(exact[-1] as number)} (slicer)`
-                        : `~${fmtMin(plan.plates[0].est_min)}`}
-                    {plan.slicer && exact[-1] == null && (
-                      <button
-                        className="print-exact"
-                        onClick={() => sliceExact(undefined)}
-                        title="Run PrusaSlicer for the exact time"
-                      >
-                        exact?
-                      </button>
-                    )}
+                    {renderTime(-1, plan.plates[0].est_min)}
                   </>
                 )}
               </div>
@@ -349,20 +418,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                       {p.est_min != null && (
                         <>
                           {" · "}
-                          {exact[p.index] === "working"
-                            ? "slicing…"
-                            : exact[p.index] != null
-                              ? `${fmtMin(exact[p.index] as number)} (slicer)`
-                              : `~${fmtMin(p.est_min)}`}
-                          {plan.slicer && exact[p.index] == null && (
-                            <button
-                              className="print-exact"
-                              onClick={() => sliceExact(p.index)}
-                              title="Run PrusaSlicer for the exact time"
-                            >
-                              exact?
-                            </button>
-                          )}
+                          {renderTime(p.index, p.est_min)}
                         </>
                       )}
                     </span>
