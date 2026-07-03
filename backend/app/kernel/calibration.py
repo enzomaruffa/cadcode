@@ -29,7 +29,11 @@ from app.kernel.print_time import base_support_seconds, default_mult
 
 _LOCK = threading.Lock()
 _MAX_SAMPLES = 500
-_RIDGE = 3.0  # pull both multipliers toward 1.0 (≈ this many "prior samples")
+# Strong pull toward 1.0: the instant estimate is only a placeholder (the slicer
+# is auto-run for the real number), so calibration should nudge, never overfit a
+# handful of collinear samples into a wild (and worse) extrapolation.
+_RIDGE = 10.0
+_CLAMP = (0.4, 3.5)  # keep multipliers physical regardless of noisy samples
 
 
 def _store_path() -> Path:
@@ -74,10 +78,10 @@ def _fit(samples: list[dict]) -> dict[str, float]:
         sol, *_ = np.linalg.lstsq(xa, ya, rcond=None)
     except Exception:
         return default_mult()
-    sol = np.clip(sol, 0.0, None)
     if not np.all(np.isfinite(sol)):
         return default_mult()
-    return {"base": float(sol[0]), "support": float(sol[1])}
+    lo, hi = _CLAMP
+    return {"base": float(np.clip(sol[0], lo, hi)), "support": float(np.clip(sol[1], lo, hi))}
 
 
 def record(features: dict[str, float], slicer_minutes: float) -> dict[str, float]:

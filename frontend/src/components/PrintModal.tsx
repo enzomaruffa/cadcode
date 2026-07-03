@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HTTP_URL } from "../config";
 import type { Spec, TessShapes } from "../lib/protocol";
 import { useStore } from "../lib/store";
@@ -74,6 +74,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   // Exact slicer times, keyed by plate index (-1 = whole single plate).
   const [exact, setExact] = useState<Record<number, number | "working">>({});
   const [calN, setCalN] = useState(0); // how many real slices the estimator learned from
+  const planToken = useRef(0); // bump per plan → in-flight background slices from an old plan are dropped
 
   const refreshCal = () =>
     fetch(`${HTTP_URL}/print/calibration`)
@@ -136,6 +137,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         setPlan(d);
         setExact({});
         renderShapes(d.shapes, []); // show the arranged plate in the viewport
+        // Auto-run the real slicer per plate in the background → the "~" estimates
+        // get replaced with exact numbers. A new plan bumps the token so stale
+        // slices are dropped.
+        if (d.slicer) {
+          const token = ++planToken.current;
+          void autoSlice(d, token);
+        }
       } else {
         setError(d.error ?? "plan failed");
       }
@@ -146,9 +154,11 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  // Ask the server to actually SLICE a plate (PrusaSlicer) for the exact time.
-  const sliceExact = async (plate?: number) => {
+  // Slice one plate with PrusaSlicer for the exact time. `token` guards against a
+  // superseded plan (null = manual button, always applies + surfaces errors).
+  const sliceOne = async (plate: number | undefined, token: number | null) => {
     const key = plate ?? -1;
+    const live = () => token === null || token === planToken.current;
     setExact((e) => ({ ...e, [key]: "working" }));
     try {
       const r = await fetch(`${HTTP_URL}/print/slice`, {
@@ -157,6 +167,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, plate }),
       });
       const d: { ok?: boolean; minutes?: number; error?: string } = await r.json();
+      if (!live()) return; // a newer plan superseded this slice
       if (d.ok && d.minutes != null) {
         setExact((e) => ({ ...e, [key]: d.minutes! }));
         refreshCal(); // this slice just taught the estimator
@@ -165,10 +176,32 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
           const { [key]: _drop, ...rest } = e;
           return rest;
         });
-        setError(d.error ?? "slicing failed");
+        if (token === null) setError(d.error ?? "slicing failed");
       }
     } catch (e) {
-      setError(String(e));
+      if (live()) {
+        setExact((e2) => {
+          const { [key]: _drop, ...rest } = e2;
+          return rest;
+        });
+        if (token === null) setError(String(e));
+      }
+    }
+  };
+
+  const sliceExact = (plate?: number) => void sliceOne(plate, null);
+
+  // Background: slice every plate of a fresh plan, one at a time (slicing is
+  // CPU-heavy), stopping early if a newer plan took over.
+  const autoSlice = async (d: Plan, token: number) => {
+    const plates = d.plates ?? [];
+    if (plates.length <= 1) {
+      await sliceOne(undefined, token);
+      return;
+    }
+    for (const p of plates) {
+      if (token !== planToken.current) return;
+      await sliceOne(p.index, token);
     }
   };
 
@@ -211,10 +244,9 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         <div className="modal-body">
           <p className="help-intro">
             Pick parts and how many of each. Each part is auto-oriented for your chosen goal and packed onto as few
-            plates as needed; the plates render in the viewport and each downloads as one file for your slicer.{" "}
-            {calN > 0
-              ? `Time estimates are calibrated from ${calN} real slice${calN > 1 ? "s" : ""}; hit "exact?" for the slicer's own number.`
-              : `Times are quick estimates — hit "exact?" on a plate for the real slicer number (which also trains the estimates).`}
+            plates as needed; the plates render in the viewport and each downloads as one file for your slicer. Times
+            show a quick estimate instantly, then the <b>real slicer</b> runs in the background and replaces them with
+            exact numbers.{calN > 0 ? ` Estimates are self-calibrating (${calN} slices learned so far).` : ""}
           </p>
 
           <div className="print-bed">
