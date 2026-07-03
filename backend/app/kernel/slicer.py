@@ -24,17 +24,28 @@ def slicer_available() -> bool:
     return shutil.which("prusa-slicer") is not None
 
 
-def slice_minutes(objs: list[Any], timeout_s: int = 180) -> dict[str, float] | None:
+def slice_minutes(
+    objs: list[Any], bed: tuple[float, float] = (220.0, 220.0), timeout_s: int = 180
+) -> dict[str, float] | None:
     """Slice the given solids as ONE plate; returns {minutes, filament_cm3} or
-    None (no slicer / slicing failed). Runs PrusaSlicer headless."""
+    None (no slicer / slicing failed). Runs PrusaSlicer headless.
+
+    Our plates are centered on the origin, but PrusaSlicer's bed starts at the
+    corner (0,0) and defaults to ~200mm — off-bed objects "slice" to an empty
+    G-code with exit 0. So: translate the plate into the bed's quadrant and pass
+    the real bed shape."""
     if not objs or not slicer_available():
         return None
-    from build123d import Compound, export_stl
+    from build123d import Compound, Pos, export_stl
+
+    obj = objs[0] if len(objs) == 1 else Compound(children=objs)
+    bb = obj.bounding_box()
+    obj = Pos(bed[0] / 2 - (bb.min.X + bb.max.X) / 2, bed[1] / 2 - (bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * obj
+    bed_shape = f"0x0,{bed[0]:g}x0,{bed[0]:g}x{bed[1]:g},0x{bed[1]:g}"
 
     with tempfile.TemporaryDirectory(prefix="cadslice_") as d:
         stl = Path(d) / "plate.stl"
         gcode = Path(d) / "plate.gcode"
-        obj = objs[0] if len(objs) == 1 else Compound(children=objs)
         export_stl(obj, str(stl))
         cmd = [
             "prusa-slicer",
@@ -47,6 +58,8 @@ def slice_minutes(objs: list[Any], timeout_s: int = 180) -> dict[str, float] | N
             "0.4",
             "--filament-diameter",
             "1.75",
+            "--bed-shape",
+            bed_shape,
             "--support-material",  # match reality: overhangs get support
             "--output",
             str(gcode),
@@ -59,7 +72,7 @@ def slice_minutes(objs: list[Any], timeout_s: int = 180) -> dict[str, float] | N
         try:
             text = gcode.read_text(errors="ignore")
         except OSError:
-            return None
+            return None  # "sliced" but wrote nothing (e.g. still off-bed)
     m = _TIME_RE.search(text)
     if not m:
         return None

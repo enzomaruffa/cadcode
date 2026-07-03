@@ -520,7 +520,7 @@ async def print_slice(payload: dict) -> dict:
         if plate_no is not None:
             plate_of = plan.get("_plate_of") or []
             objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
-        result = slice_minutes(objs)
+        result = slice_minutes(objs, bed)
         if result is None:
             return {"ok": False, "error": "slicing failed"}
         return {"ok": True, "plate": plate_no, **result}
