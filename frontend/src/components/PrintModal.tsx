@@ -13,6 +13,7 @@ interface PlanStats {
   qty: number;
   orientation: string;
   support_area: number;
+  est_min?: number;
 }
 interface PlateInfo {
   index: number;
@@ -20,6 +21,7 @@ interface PlateInfo {
   d: number;
   bed_w: number;
   bed_d: number;
+  est_min?: number;
 }
 interface Plan {
   ok: boolean;
@@ -29,6 +31,13 @@ interface Plan {
   stats?: PlanStats[];
   fits?: boolean;
   plates?: PlateInfo[];
+  slicer?: boolean; // prusa-slicer available server-side for exact times
+}
+
+function fmtMin(min: number | undefined): string {
+  if (min == null) return "";
+  if (min < 60) return `${Math.round(min)}min`;
+  return `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, "0")}m`;
 }
 
 // One printable item the user can add to the plate.
@@ -44,7 +53,7 @@ type Strategy = "material" | "plates" | "fastest";
 const STRATEGIES: { key: Strategy; label: string; hint: string }[] = [
   { key: "material", label: "least material", hint: "orient every part for the least support waste" },
   { key: "plates", label: "fewest plates", hint: "orient for the smallest footprints so more parts share a bed" },
-  { key: "fastest", label: "fastest print", hint: "orient for the shortest parts — fewer layers, faster print" },
+  { key: "fastest", label: "fastest print", hint: "orient for the least estimated print time (walls+infill+support)" },
 ];
 
 // Print plating: pick parts + quantities, a bed size, and a strategy; the
@@ -62,6 +71,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  // Exact slicer times, keyed by plate index (-1 = whole single plate).
+  const [exact, setExact] = useState<Record<number, number | "working">>({});
 
   // Candidates are project-scoped: the active project's own parts + any part it
   // imports (cross-project or lib). No project → everything.
@@ -113,6 +124,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const d: Plan = await r.json();
       if (d.ok && d.shapes) {
         setPlan(d);
+        setExact({});
         renderShapes(d.shapes, []); // show the arranged plate in the viewport
       } else {
         setError(d.error ?? "plan failed");
@@ -121,6 +133,30 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Ask the server to actually SLICE a plate (PrusaSlicer) for the exact time.
+  const sliceExact = async (plate?: number) => {
+    const key = plate ?? -1;
+    setExact((e) => ({ ...e, [key]: "working" }));
+    try {
+      const r = await fetch(`${HTTP_URL}/print/slice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, plate }),
+      });
+      const d: { ok?: boolean; minutes?: number; error?: string } = await r.json();
+      if (d.ok && d.minutes != null) setExact((e) => ({ ...e, [key]: d.minutes! }));
+      else {
+        setExact((e) => {
+          const { [key]: _drop, ...rest } = e;
+          return rest;
+        });
+        setError(d.error ?? "slicing failed");
+      }
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -229,6 +265,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                   <span>
                     {s.orientation === "as-is" ? "as modeled" : `rotated ${s.orientation}`}
                     {s.support_area === 0 ? " · no support 🎉" : ` · ~${s.support_area} mm² support`}
+                    {s.est_min != null ? ` · ~${fmtMin(s.est_min)} each` : ""}
                   </span>
                 </div>
               ))}
@@ -237,12 +274,50 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                   ? `one plate, ${plan.plates?.[0]?.w}×${plan.plates?.[0]?.d} mm on a ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed`
                   : `split across ${plan.plates?.length} plates (each fits your ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed)`}
                 {plan.fits ? " ✓" : " — a part is bigger than the bed itself!"}
+                {(plan.plates?.length ?? 1) === 1 && plan.plates?.[0]?.est_min != null && (
+                  <>
+                    {" · "}
+                    {exact[-1] === "working"
+                      ? "slicing…"
+                      : exact[-1] != null
+                        ? `${fmtMin(exact[-1] as number)} (slicer)`
+                        : `~${fmtMin(plan.plates[0].est_min)}`}
+                    {plan.slicer && exact[-1] == null && (
+                      <button
+                        className="print-exact"
+                        onClick={() => sliceExact(undefined)}
+                        title="Run PrusaSlicer for the exact time"
+                      >
+                        exact?
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
               {(plan.plates?.length ?? 0) > 1 &&
                 plan.plates?.map((p) => (
                   <div className="print-plate-dl" key={p.index}>
                     <span>
                       plate {p.index + 1} · {p.w}×{p.d} mm
+                      {p.est_min != null && (
+                        <>
+                          {" · "}
+                          {exact[p.index] === "working"
+                            ? "slicing…"
+                            : exact[p.index] != null
+                              ? `${fmtMin(exact[p.index] as number)} (slicer)`
+                              : `~${fmtMin(p.est_min)}`}
+                          {plan.slicer && exact[p.index] == null && (
+                            <button
+                              className="print-exact"
+                              onClick={() => sliceExact(p.index)}
+                              title="Run PrusaSlicer for the exact time"
+                            >
+                              exact?
+                            </button>
+                          )}
+                        </>
+                      )}
                     </span>
                     <span>
                       <button className="btn" onClick={() => download("stl", p.index)} disabled={busy}>

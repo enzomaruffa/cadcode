@@ -20,9 +20,10 @@ FROM python:3.12-slim AS app
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /bin/
 
 # OpenCASCADE (build123d / cadquery-ocp) runtime libs + git (for checkpoints)
+# + prusa-slicer (headless CLI) for exact print-time numbers on print plates
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 libglu1-mesa libxext6 libx11-6 libxrender1 libxcb1 libgomp1 \
-      git ca-certificates \
+      git ca-certificates prusa-slicer \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend

@@ -1,11 +1,13 @@
-"""Print plating: pick parts + quantities → an arranged, print-ready plate.
+"""Print plating: pick parts + quantities → arranged, print-ready plates.
 
-For each chosen part we try the six principal orientations and score them by the
-area that would need support (downward faces past the overhang limit — same
-physics as the printability heatmap), tie-breaking on height (shorter prints
-faster and safer). The best orientation is dropped onto the bed (min Z = 0) and
-all instances are shelf-packed onto the plate with padding. The result renders
-in the viewport like any geometry and exports as one STL/3MF for the slicer.
+Each part is tessellated once and its six principal orientations are scored on
+the MESH (`kernel/print_time.py`): support area, slicer-style estimated minutes,
+and footprint — the chosen strategy decides which metric leads. The best
+orientation is dropped onto the bed and all instances are packed onto as few
+bed-sized plates as needed (first-fit-decreasing shelf packing with free 90°
+in-plane rotation). Plates render in the viewport, carry per-part/per-plate time
+estimates, and export as one STL/3MF each; headless PrusaSlicer (when installed)
+provides exact times on demand.
 """
 
 from __future__ import annotations
@@ -13,49 +15,15 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from app.kernel.printability import OVERHANG_LIMIT, _overhang
-
 # Default FDM bed (mm) — a common 220x220 printer; the UI can override.
 DEFAULT_BED = (220.0, 220.0)
 PADDING = 6.0  # space between parts on the plate
 
 
-# 5x5 UV grid — catches curved undersides. Deliberately 5 points: an even count
-# on a full cylinder lands every normal at exactly 45° (the threshold), scoring a
-# sideways cylinder as support-free.
-_UV = [0.1, 0.3, 0.5, 0.7, 0.9]
+def _has_slicer() -> bool:
+    from app.kernel.slicer import slicer_available
 
-
-def _support_metrics(obj: Any) -> tuple[float, float]:
-    """(support_area, height) for a candidate orientation: the summed area of
-    downward face regions past the overhang limit, and the Z height. Curved
-    faces are sampled on a UV grid (a face-center normal alone calls a sideways
-    cylinder's belly 'vertical'). Flat undersides ON the bed are excluded."""
-    from build123d import Face
-    from ocp_tessellate import convert as C
-
-    bb = obj.bounding_box()
-    zmin = bb.min.Z
-    height = bb.max.Z - zmin
-    support = 0.0
-    w = obj.wrapped if hasattr(obj, "wrapped") else obj
-    for topo_face in C.get_faces(w):
-        face = Face(topo_face)
-        on_bed = abs(face.center().Z - zmin) < 0.05
-        cell = face.area / (len(_UV) * len(_UV))
-        for u in _UV:
-            for v in _UV:
-                try:
-                    n = face.normal_at(u, v)
-                except Exception:
-                    n = face.normal_at()
-                oh = _overhang(n.X, n.Y, n.Z, (0.0, 0.0, 1.0))
-                if oh > OVERHANG_LIMIT:
-                    # a flat underside resting on the bed needs no support
-                    if on_bed and oh > 89.0:
-                        continue
-                    support += cell
-    return support, height
+    return slicer_available()
 
 
 def _orientations() -> list[tuple[str, float, float]]:
@@ -70,41 +38,47 @@ def _orientations() -> list[tuple[str, float, float]]:
     ]
 
 
-# What each strategy optimizes when choosing a part's orientation. The metrics
-# per candidate are (support_area, height, footprint_area); the strategy is the
-# priority order of those metrics:
-#   material — least support waste (then shortest)
+# What each strategy optimizes when choosing a part's orientation. Metrics per
+# candidate come from the MESH (tessellated once, rotated per candidate — the
+# same triangles a slicer sees): support area, estimated minutes, footprint.
+#   material — least support waste (then fastest)
 #   plates   — smallest footprint so more parts share a bed (then least support)
-#   fastest  — shortest (layer count dominates print time; then least support)
+#   fastest  — least ESTIMATED PRINT TIME (slicer-style layer estimate)
 STRATEGIES = ("material", "plates", "fastest")
 
 
-def _orient(obj: Any, strategy: str = "material") -> tuple[Any, str, float]:
-    """Pick the best orientation for the strategy. Returns the rotated +
-    bed-dropped solid, the orientation label, and its support area."""
+def _orient(obj: Any, strategy: str = "material") -> tuple[Any, str, float, float]:
+    """Pick the best orientation for the strategy — scored on the tessellated
+    mesh (rotating vertices is free; no re-tessellation per candidate). Returns
+    (rotated + bed-dropped solid, label, support area, estimated minutes)."""
     from build123d import Pos, Rot
 
-    best: tuple[tuple[float, ...], Any, str, float] | None = None
+    from app.kernel.print_time import estimate_minutes, mesh_of, rotate_mesh, support_area
+
+    verts, tris = mesh_of(obj)
+    best: tuple[tuple[float, ...], str, float, float, float, float] | None = None
     for label, rx, ry in _orientations():
-        cand = Rot(X=rx, Y=ry) * obj if (rx or ry) else obj
-        support, height = _support_metrics(cand)
-        bb = cand.bounding_box()
-        footprint = (bb.max.X - bb.min.X) * (bb.max.Y - bb.min.Y)
-        m = {"s": round(support, 3), "h": round(height, 3), "f": round(footprint, 1)}
+        v = rotate_mesh(verts, rx, ry)
+        v = v - [0.0, 0.0, float(v[:, 2].min())]  # drop onto the bed
+        sup = support_area(v, tris)
+        minutes = estimate_minutes(v, tris, support_mm2=sup)["minutes"]
+        footprint = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
+        m = {"s": round(sup, 1), "t": minutes, "f": round(footprint, 1)}
         if strategy == "plates":
-            key = (m["f"], m["s"], m["h"])
+            key = (m["f"], m["s"], m["t"])
         elif strategy == "fastest":
-            key = (m["h"], m["s"], m["f"])
+            key = (m["t"], m["s"], m["f"])
         else:  # material
-            key = (m["s"], m["h"], m["f"])
+            key = (m["s"], m["t"], m["f"])
         if best is None or key < best[0]:
-            best = (key, cand, label, support)
+            best = (key, label, sup, minutes, rx, ry)
     assert best is not None
-    oriented = best[1]
+    _key, label, sup, minutes, rx, ry = best
+    oriented = Rot(X=rx, Y=ry) * obj if (rx or ry) else obj
     bb = oriented.bounding_box()
     # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
-    return oriented, best[2], best[3]
+    return oriented, label, sup, minutes
 
 
 def _build_part(project: str | None, name: str) -> Any:
@@ -278,7 +252,8 @@ def plan_print(
                 added = str(tmp)
                 sys.path.insert(0, added)
 
-            oriented: list[tuple[str, Any, str, float, int]] = []  # (label, solid, orientation, support, qty)
+            # (label, solid, orientation, support, est minutes, qty)
+            oriented: list[tuple[str, Any, str, float, float, int]] = []
             # Parts may declare specs with the ambient `require(...)` — bind the
             # DSL while building (same as any run), else such parts NameError.
             from app.kernel.runner import _ambient_dsl, _make_namespace
@@ -290,21 +265,25 @@ def plan_print(
                         base = _build_part(project, name)
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
-                    solid, orientation, support = _orient(base, strategy if strategy in STRATEGIES else "material")
-                    oriented.append((f"{project + '/' if project else ''}{name}", solid, orientation, support, qty))
+                    solid, orientation, support, minutes = _orient(
+                        base, strategy if strategy in STRATEGIES else "material"
+                    )
+                    oriented.append(
+                        (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty)
+                    )
 
             # one rect per INSTANCE
             rects: list[tuple[int, float, float]] = []
-            inst: list[tuple[int, Any, str]] = []  # (rect idx, solid, display name)
+            inst: list[tuple[int, Any, str, float]] = []  # (rect idx, solid, display name, est minutes)
             counters: dict[str, int] = {}
-            for label, solid, _o, _s, qty in oriented:
+            for label, solid, _o, _s, minutes, qty in oriented:
                 bb = solid.bounding_box()
                 w, d = bb.max.X - bb.min.X + PADDING, bb.max.Y - bb.min.Y + PADDING
                 for _ in range(qty):
                     counters[label] = counters.get(label, 0) + 1
                     idx = len(rects)
                     rects.append((idx, w, d))
-                    inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_")))
+                    inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_"), minutes))
 
             placements, plates, fits = _pack_plates(rects, bed)
 
@@ -315,7 +294,8 @@ def plan_print(
             n_plates = len(plates)
             row_w = n_plates * bed[0] + (n_plates - 1) * gap
             objs, names, colors, plate_of = [], [], [], []
-            for (idx, solid, name), _r in zip(inst, rects, strict=True):
+            plate_minutes = [0.0] * n_plates
+            for (idx, solid, name, minutes), _r in zip(inst, rects, strict=True):
                 pi, cx, cy, rotated = placements[idx]
                 placed = Rot(Z=90) * solid if rotated else solid
                 px = pi * (bed[0] + gap) - row_w / 2  # this plate's left edge
@@ -323,6 +303,7 @@ def plan_print(
                 names.append(f"plate{pi + 1}_{name}" if n_plates > 1 else name)
                 colors.append(_obj_color(solid))
                 plate_of.append(pi)
+                plate_minutes[pi] += minutes
 
             shapes, states, bbox = tessellate(objs, names=names, colors=colors)
         finally:
@@ -339,8 +320,9 @@ def plan_print(
             "qty": qty,
             "orientation": orientation,
             "support_area": round(support, 1),
+            "est_min": round(minutes, 1),
         }
-        for label, _s, orientation, support, qty in oriented
+        for label, _s, orientation, support, minutes, qty in oriented
     ]
     result: dict[str, Any] = {
         "ok": True,
@@ -350,9 +332,17 @@ def plan_print(
         "stats": stats,
         "fits": fits,
         "plates": [
-            {"index": i, "w": round(p.used_w, 1), "d": round(p.used_d, 1), "bed_w": bed[0], "bed_d": bed[1]}
+            {
+                "index": i,
+                "w": round(p.used_w, 1),
+                "d": round(p.used_d, 1),
+                "bed_w": bed[0],
+                "bed_d": bed[1],
+                "est_min": round(plate_minutes[i], 1),
+            }
             for i, p in enumerate(plates)
         ],
+        "slicer": _has_slicer(),
     }
     if want_objects:
         result["_objects"] = objs

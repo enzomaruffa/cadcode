@@ -200,7 +200,14 @@ def mass_properties(objs: list[Any], materials: list[dict[str, Any]]) -> dict[st
     if fil_d > 0:
         filament_len_mm = round(total_vol_mm3 / (math.pi * (fil_d / 2.0) ** 2), 1)
 
-    print_time_min = round((total_vol_mm3 / (_FLOW_MM3_S * _FLOW_EFFICIENCY)) / 60.0, 1)
+    # Slicer-style layer estimate from the real mesh (walls + infill + skins +
+    # travel), not the old solid-volume ÷ flow heuristic.
+    try:
+        from app.kernel.print_time import estimate_objects_minutes
+
+        print_time_min = estimate_objects_minutes(list(objs))
+    except Exception:  # noqa: BLE001 - keep the readout alive on any mesh hiccup
+        print_time_min = round((total_vol_mm3 / (_FLOW_MM3_S * _FLOW_EFFICIENCY)) / 60.0, 1)
 
     return {
         "mass_g": round(total_mass_g, 3),

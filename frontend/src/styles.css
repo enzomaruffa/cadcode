@@ -2402,6 +2402,20 @@ textarea {
   margin-left: var(--sp-1);
   font-size: var(--fs-xs);
 }
+.print-exact {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 0 5px;
+  margin-left: var(--sp-1);
+  cursor: pointer;
+}
+.print-exact:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
 
 /* ===== build123d help modal ===== */
 .modal-help {

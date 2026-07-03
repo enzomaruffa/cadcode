@@ -497,6 +497,37 @@ async def print_plan(payload: dict) -> dict:
     return await asyncio.to_thread(plan_print, items, bed, False, strategy)
 
 
+@app.post("/print/slice")
+async def print_slice(payload: dict) -> dict:
+    """EXACT print time via headless PrusaSlicer (when installed): re-plan
+    deterministically, slice the requested plate (or everything), and parse the
+    slicer's own estimate. Slower than /print/plan — seconds, not instant."""
+    import asyncio
+
+    from app.kernel.slicer import slice_minutes, slicer_available
+    from app.printplan import plan_print
+
+    if not slicer_available():
+        return {"ok": False, "error": "prusa-slicer isn't installed on this server"}
+    items, bed, strategy = _print_args(payload)
+    plate_no = payload.get("plate")
+
+    def _go() -> dict:
+        plan = plan_print(items, bed, want_objects=True, strategy=strategy)
+        if not plan.get("ok"):
+            return {"ok": False, "error": plan.get("error") or "plan failed"}
+        objs = plan.get("_objects") or []
+        if plate_no is not None:
+            plate_of = plan.get("_plate_of") or []
+            objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
+        result = slice_minutes(objs)
+        if result is None:
+            return {"ok": False, "error": "slicing failed"}
+        return {"ok": True, "plate": plate_no, **result}
+
+    return await asyncio.to_thread(_go)
+
+
 @app.post("/print/export")
 async def print_export(payload: dict) -> Response:
     """Re-plan the plate (deterministic for the same inputs) and export it as one
