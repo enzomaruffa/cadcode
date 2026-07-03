@@ -484,6 +484,15 @@ async def print_parts(project: str = "") -> dict:
     return {"parts": print_candidates(project or None)}
 
 
+@app.get("/print/calibration")
+async def print_calibration() -> dict:
+    """How well-calibrated the instant estimator is (samples learned from real
+    slicer runs) — so the UI can show 'calibrated from N prints'."""
+    from app.kernel.calibration import status
+
+    return status()
+
+
 @app.post("/print/plan")
 async def print_plan(payload: dict) -> dict:
     """Arrange parts for printing: {items: [{project?, name, qty}], bed: {w, d}}.
@@ -523,6 +532,16 @@ async def print_slice(payload: dict) -> dict:
         result = slice_minutes(objs, bed)
         if result is None:
             return {"ok": False, "error": "slicing failed"}
+        # Teach the instant estimator: pair this plate's features with the
+        # slicer's true minutes and refit the calibration coefficients.
+        try:
+            from app.kernel.calibration import record
+            from app.kernel.print_time import mesh_of, plate_features
+
+            feats = plate_features([mesh_of(o) for o in objs])
+            record(feats, result["minutes"])
+        except Exception:
+            pass  # calibration is best-effort
         return {"ok": True, "plate": plate_no, **result}
 
     return await asyncio.to_thread(_go)

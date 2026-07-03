@@ -73,6 +73,16 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [plan, setPlan] = useState<Plan | null>(null);
   // Exact slicer times, keyed by plate index (-1 = whole single plate).
   const [exact, setExact] = useState<Record<number, number | "working">>({});
+  const [calN, setCalN] = useState(0); // how many real slices the estimator learned from
+
+  const refreshCal = () =>
+    fetch(`${HTTP_URL}/print/calibration`)
+      .then((r) => r.json())
+      .then((d: { samples?: number }) => setCalN(d.samples ?? 0))
+      .catch(() => void 0);
+  useEffect(() => {
+    refreshCal();
+  }, []);
 
   // Candidates are project-scoped: the active project's own parts + any part it
   // imports (cross-project or lib). No project → everything.
@@ -147,8 +157,10 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, plate }),
       });
       const d: { ok?: boolean; minutes?: number; error?: string } = await r.json();
-      if (d.ok && d.minutes != null) setExact((e) => ({ ...e, [key]: d.minutes! }));
-      else {
+      if (d.ok && d.minutes != null) {
+        setExact((e) => ({ ...e, [key]: d.minutes! }));
+        refreshCal(); // this slice just taught the estimator
+      } else {
         setExact((e) => {
           const { [key]: _drop, ...rest } = e;
           return rest;
@@ -199,7 +211,10 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         <div className="modal-body">
           <p className="help-intro">
             Pick parts and how many of each. Each part is auto-oriented for your chosen goal and packed onto as few
-            plates as needed; the plates render in the viewport and each downloads as one file for your slicer.
+            plates as needed; the plates render in the viewport and each downloads as one file for your slicer.{" "}
+            {calN > 0
+              ? `Time estimates are calibrated from ${calN} real slice${calN > 1 ? "s" : ""}; hit "exact?" for the slicer's own number.`
+              : `Times are quick estimates — hit "exact?" on a plate for the real slicer number (which also trains the estimates).`}
           </p>
 
           <div className="print-bed">
