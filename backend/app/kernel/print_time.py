@@ -47,21 +47,40 @@ PROFILE: dict[str, float] = {
     "layer_overhead_s": 1.2,  # z move + accel/decel per plate layer (default layer coeff)
 }
 
-# Order of the calibrated feature vector.
+# The geometric feature 'seconds'. Each maps to a calibration GROUP: everything
+# non-support is scaled by one `base` multiplier, support by its own `support`
+# multiplier. Two robust knobs (overall speed bias + the gnarly support bias)
+# instead of five collinear per-feature coefficients that overfit on few samples.
 FEATURES = ("wall_s", "skin_s", "infill_s", "support_s", "layers")
+GROUP = {"wall_s": "base", "skin_s": "base", "infill_s": "base", "support_s": "support", "layers": "base"}
 OVERHANG_COS = -math.sin(math.radians(45.0))  # nz below this ⇒ needs support
 
 
 def default_coeffs(profile: dict[str, float] | None = None) -> dict[str, float]:
+    """Hand-tuned per-feature seconds→seconds weights (travel + overhead)."""
     p = {**PROFILE, **(profile or {})}
     tf = p["travel_factor"]
     return {"wall_s": tf, "skin_s": tf, "infill_s": tf, "support_s": tf, "layers": p["layer_overhead_s"]}
 
 
-def combine(features: dict[str, float], coeffs: dict[str, float]) -> float:
-    """minutes = Σ coeff·feature_seconds / 60 (layers term is seconds/layer)."""
-    total = sum(coeffs.get(k, 0.0) * features.get(k, 0.0) for k in FEATURES)
-    return round(total / 60.0, 1)
+def default_mult() -> dict[str, float]:
+    return {"base": 1.0, "support": 1.0}
+
+
+def base_support_seconds(features: dict[str, float]) -> tuple[float, float]:
+    """Split feature-seconds into (base_seconds, support_seconds) at default
+    weights — the two regressors calibration fits a multiplier for."""
+    dc = default_coeffs()
+    base = sum(dc[k] * features.get(k, 0.0) for k in FEATURES if GROUP[k] == "base")
+    support = sum(dc[k] * features.get(k, 0.0) for k in FEATURES if GROUP[k] == "support")
+    return base, support
+
+
+def combine(features: dict[str, float], mult: dict[str, float] | None = None) -> float:
+    """minutes = (base_scale·base_seconds + support_scale·support_seconds) / 60."""
+    m = mult or default_mult()
+    base, support = base_support_seconds(features)
+    return round((m.get("base", 1.0) * base + m.get("support", 1.0) * support) / 60.0, 1)
 
 
 # --- meshing ----------------------------------------------------------------
@@ -217,13 +236,13 @@ def part_features(verts: np.ndarray, tris: np.ndarray, profile: dict[str, float]
     }
 
 
-def _coeffs() -> dict[str, float]:
+def _mult() -> dict[str, float]:
     try:
-        from app.kernel.calibration import coeffs
+        from app.kernel.calibration import mult
 
-        return coeffs()
+        return mult()
     except Exception:
-        return default_coeffs()
+        return default_mult()
 
 
 def estimate_minutes(
@@ -234,8 +253,7 @@ def estimate_minutes(
 ) -> dict[str, float]:
     """Calibrated print-time (minutes) + feature breakdown for one part."""
     feats = part_features(verts, tris, profile)
-    c = _coeffs()
-    return {**feats, "minutes": combine(feats, c)}
+    return {**feats, "minutes": combine(feats, _mult())}
 
 
 def plate_features(
@@ -254,7 +272,7 @@ def plate_features(
 
 def plate_minutes(meshes: list[tuple[np.ndarray, np.ndarray]], profile: dict[str, float] | None = None) -> float:
     """Calibrated print-time for a plate of already-positioned meshes."""
-    return combine(plate_features(meshes, profile), _coeffs())
+    return combine(plate_features(meshes, profile), _mult())
 
 
 def estimate_objects_minutes(objs: list[Any]) -> float:
