@@ -33,6 +33,7 @@ interface Plan {
   supports?: boolean; // whether this plan was arranged with support material on
   any_needs_support?: boolean; // some part still overhangs at its best orientation
   fits?: boolean;
+  total_min?: number; // shortest-path time to print ALL plates on one printer (support incl.)
   plates?: PlateInfo[];
   slicer?: boolean; // prusa-slicer available server-side for exact times
 }
@@ -432,6 +433,35 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                     </span>
                   </div>
                 ))}
+              {/* Grand total across all plates — the shortest-path time to print
+                  everything on one printer, support included. For >1 plate more
+                  plates cost MORE (each re-pays its layer overhead); support is
+                  the same however parts are split, so this is the honest number. */}
+              {(plan.plates?.length ?? 0) > 1 &&
+                plan.total_min != null &&
+                (() => {
+                  const results = (plan.plates ?? []).map((p) => exact[p.index]);
+                  const done = results.filter((r) => r != null && r !== "working") as SliceResult[];
+                  const allDone = done.length === results.length && results.length > 0;
+                  const slicerTotal = allDone ? done.reduce((a, r) => a + r.minutes, 0) : null;
+                  const filTotal = allDone ? done.reduce((a, r) => a + (r.filament_cm3 ?? 0), 0) : 0;
+                  return (
+                    <div className="print-total">
+                      <b>all {plan.plates?.length} plates</b>
+                      {" · "}
+                      {slicerTotal != null ? (
+                        <>
+                          {fmtMin(slicerTotal)} (slicer){filTotal > 0 ? ` · ${fmtCm3(filTotal)}` : ""}
+                        </>
+                      ) : (
+                        <>
+                          ~{fmtMin(plan.total_min)}
+                          {plan.slicer ? " · slicing plates…" : ""}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
             </div>
           )}
 

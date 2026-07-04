@@ -47,10 +47,14 @@ def _orientations() -> list[tuple[str, float, float]]:
 STRATEGIES = ("material", "plates", "fastest")
 
 
-def _orient(obj: Any, strategy: str = "material", supports: bool = True) -> tuple[Any, str, float, float]:
+def _orient(
+    obj: Any, strategy: str = "material", supports: bool = True
+) -> tuple[Any, str, float, float, tuple[Any, Any], Any]:
     """Pick the best orientation for the strategy — scored on the tessellated
     mesh (rotating vertices is free; no re-tessellation per candidate). Returns
-    (rotated + bed-dropped solid, label, support area, estimated minutes).
+    (rotated + bed-dropped solid, label, support area, estimated minutes, oriented
+    mesh (verts, tris), profile) — the mesh + profile let the caller aggregate a
+    correct PLATE time (shared layers) instead of summing per-part times.
 
     `supports` reflects the print setting: even without support material we still
     prefer orientations with less overhang (they print cleaner), so support area
@@ -64,7 +68,7 @@ def _orient(obj: Any, strategy: str = "material", supports: bool = True) -> tupl
     # for orientation ranking + display).
     prof = None if supports else {"support_density": 0.0}
     verts, tris = mesh_of(obj)
-    best: tuple[tuple[float, ...], str, float, float, float, float] | None = None
+    best: tuple[tuple[float, ...], str, float, float, float, float, Any] | None = None
     for label, rx, ry in _orientations():
         v = rotate_mesh(verts, rx, ry)
         v = v - [0.0, 0.0, float(v[:, 2].min())]  # drop onto the bed
@@ -79,14 +83,14 @@ def _orient(obj: Any, strategy: str = "material", supports: bool = True) -> tupl
         else:  # material
             key = (m["s"], m["t"], m["f"])
         if best is None or key < best[0]:
-            best = (key, label, sup, minutes, rx, ry)
+            best = (key, label, sup, minutes, rx, ry, v)
     assert best is not None
-    _key, label, sup, minutes, rx, ry = best
+    _key, label, sup, minutes, rx, ry, best_v = best
     oriented = Rot(X=rx, Y=ry) * obj if (rx or ry) else obj
     bb = oriented.bounding_box()
     # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
-    return oriented, label, sup, minutes
+    return oriented, label, sup, minutes, (best_v, tris), prof
 
 
 def _build_part(project: str | None, name: str) -> Any:
@@ -267,8 +271,8 @@ def plan_print(
                 added = str(tmp)
                 sys.path.insert(0, added)
 
-            # (label, solid, orientation, support, est minutes, qty)
-            oriented: list[tuple[str, Any, str, float, float, int]] = []
+            # (label, solid, orientation, support, per-part est minutes, qty, mesh)
+            oriented: list[tuple[str, Any, str, float, float, int, tuple[Any, Any]]] = []
             # Parts may declare specs with the ambient `require(...)` — bind the
             # DSL while building (same as any run), else such parts NameError.
             from app.kernel.runner import _ambient_dsl, _make_namespace
@@ -280,25 +284,26 @@ def plan_print(
                         base = _build_part(project, name)
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
-                    solid, orientation, support, minutes = _orient(
+                    solid, orientation, support, minutes, mesh, _prof = _orient(
                         base, strategy if strategy in STRATEGIES else "material", supports
                     )
                     oriented.append(
-                        (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty)
+                        (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty, mesh)
                     )
 
-            # one rect per INSTANCE
+            # one rect per INSTANCE (carrying the oriented mesh so a plate's time
+            # can be aggregated with SHARED layer overhead, not summed per part)
             rects: list[tuple[int, float, float]] = []
-            inst: list[tuple[int, Any, str, float]] = []  # (rect idx, solid, display name, est minutes)
+            inst: list[tuple[int, Any, str, tuple[Any, Any]]] = []  # (rect idx, solid, display name, mesh)
             counters: dict[str, int] = {}
-            for label, solid, _o, _s, minutes, qty in oriented:
+            for label, solid, _o, _s, _minutes, qty, mesh in oriented:
                 bb = solid.bounding_box()
                 w, d = bb.max.X - bb.min.X + PADDING, bb.max.Y - bb.min.Y + PADDING
                 for _ in range(qty):
                     counters[label] = counters.get(label, 0) + 1
                     idx = len(rects)
                     rects.append((idx, w, d))
-                    inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_"), minutes))
+                    inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_"), mesh))
 
             placements, plates, fits = _pack_plates(rects, bed)
 
@@ -309,8 +314,8 @@ def plan_print(
             n_plates = len(plates)
             row_w = n_plates * bed[0] + (n_plates - 1) * gap
             objs, names, colors, plate_of = [], [], [], []
-            plate_minutes = [0.0] * n_plates
-            for (idx, solid, name, minutes), _r in zip(inst, rects, strict=True):
+            plate_meshes: list[list[tuple[Any, Any]]] = [[] for _ in range(n_plates)]
+            for (idx, solid, name, mesh), _r in zip(inst, rects, strict=True):
                 pi, cx, cy, rotated = placements[idx]
                 placed = Rot(Z=90) * solid if rotated else solid
                 px = pi * (bed[0] + gap) - row_w / 2  # this plate's left edge
@@ -318,7 +323,7 @@ def plan_print(
                 names.append(f"plate{pi + 1}_{name}" if n_plates > 1 else name)
                 colors.append(_obj_color(solid))
                 plate_of.append(pi)
-                plate_minutes[pi] += minutes
+                plate_meshes[pi].append(mesh)
 
             shapes, states, bbox = tessellate(objs, names=names, colors=colors)
         finally:
@@ -328,6 +333,18 @@ def plan_print(
                 del sys.modules[mod]
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
+
+    # A plate's time is its parts printing TOGETHER: extrusion (incl. support)
+    # summed, but layer overhead paid once per plate layer (shared). This is the
+    # correct model for "fastest total time" — summing per-part times would
+    # over-count the shared layers. (The auto-slicer still supersedes this per
+    # plate with the exact number; the grand total is the shortest-path time to
+    # print everything on one printer, support included.)
+    from app.kernel.print_time import plate_minutes as _plate_minutes_est
+
+    plan_prof = None if supports else {"support_density": 0.0}
+    plate_minutes = [_plate_minutes_est(m, plan_prof) if m else 0.0 for m in plate_meshes]
+    total_minutes = round(sum(plate_minutes), 1)
 
     # A part "needs support" when its best orientation still leaves meaningful
     # overhang area — surfaced so the user sees why a part costs what it does.
@@ -341,7 +358,7 @@ def plan_print(
             "needs_support": support > _SUP_MIN,
             "est_min": round(minutes, 1),
         }
-        for label, _s, orientation, support, minutes, qty in oriented
+        for label, _s, orientation, support, minutes, qty, _mesh in oriented
     ]
     result: dict[str, Any] = {
         "ok": True,
@@ -352,6 +369,7 @@ def plan_print(
         "supports": supports,
         "any_needs_support": any(s["needs_support"] for s in stats),
         "fits": fits,
+        "total_min": total_minutes,  # shortest-path time for ALL plates (one printer), support incl.
         "plates": [
             {
                 "index": i,
