@@ -340,15 +340,15 @@ def orca_catalog_filaments(vendor: str | None = None) -> dict[str, Any]:
     if "orca" not in _backend_order():
         return {"filaments": [], "default": None}
     idx = _orca_load_index()
-    keep = {_ORCA_GENERIC_VENDOR}
-    if vendor:
-        keep.add(vendor)
     out = []
     for (t, nm), d in idx.items():
         if t != "filament" or str(d.get("instantiation", "")).lower() != "true":
             continue
         v = _orca_vendor.get((t, nm), "?")
-        if v not in keep:
+        # The generic library holds ~2k branded @System profiles — keep only the
+        # true "Generic …" ones; plus everything from the printer's own vendor.
+        is_generic = v == _ORCA_GENERIC_VENDOR and nm.startswith("Generic ")
+        if not (is_generic or (vendor and v == vendor)):
             continue
         ft = _orca_flatten("filament", nm).get("filament_type")
         out.append({"name": nm, "vendor": v, "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
