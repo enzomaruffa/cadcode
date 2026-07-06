@@ -175,85 +175,97 @@ def _slice_prusa(
     }
 
 
-def _orca_machine(bed: tuple[float, float]) -> dict[str, Any]:
-    w, d = f"{bed[0]:g}", f"{bed[1]:g}"
-    return {
-        "type": "machine",
-        "name": "cadcode generic",
-        "from": "User",
-        "instantiation": "true",
-        "printer_technology": "FFF",
-        "printable_area": ["0x0", f"{w}x0", f"{w}x{d}", f"0x{d}"],
-        "printable_height": "250",
-        "nozzle_diameter": ["0.4"],
-        "gcode_flavor": "marlin",
-        "extruder_clearance_radius": "45",
-        "extruder_clearance_height_to_rod": "36",
-        "extruder_clearance_height_to_lid": "140",
-    }
+# OrcaSlicer's CLI needs a self-contained (flattened) preset: `--load-settings`
+# does NOT resolve a preset's `inherits` chain, and a process is only accepted if
+# its `compatible_printers` lists the machine's exact `name`. So we start from a
+# bundled, mutually-compatible system triple (Generic Marlin + its 0.2mm process
+# + Generic PLA), flatten each `inherits` chain into one dict, then override bed /
+# infill / support. Flattening keeps the process's `compatible_printers`
+# ("MyMarlin 0.4 nozzle") matching the machine's name → the -17 "printer not
+# compatible" error goes away.
+_ORCA_BASE = {
+    "machine": "MyMarlin 0.4 nozzle",
+    "process": "0.20mm Standard @MyMarlin",
+    "filament": "Generic PLA @System",
+}
+_orca_profile_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
 
-def _orca_process(supports: bool) -> dict[str, Any]:
-    p: dict[str, Any] = {
-        "type": "process",
-        "name": "cadcode 0.2mm",
-        "from": "User",
-        "instantiation": "true",
-        "layer_height": "0.2",
-        "initial_layer_print_height": "0.2",
-        "line_width": "0.42",
-        "sparse_infill_density": "15%",
-        "wall_loops": "2",
-        "top_shell_layers": "4",
-        "bottom_shell_layers": "3",
-        # Avoids the "Relative extruder addressing requires G92 E0" CLI abort.
-        "layer_change_gcode": "G92 E0\n",
-        "enable_support": "1" if supports else "0",
-    }
-    if supports:
-        # auto normal support only where overhangs steeper than 45° need it
-        p["support_type"] = "normal(auto)"
-        p["support_threshold_angle"] = "45"
-        p["support_on_build_plate_only"] = "0"
-    return p
+def _orca_resources() -> Path | None:
+    """The bundled `resources/profiles` dir (relative to the extracted AppImage)."""
+    cands: list[Path] = []
+    b = _orca_bin()
+    if b:
+        root = Path(b).resolve().parent
+        cands += [root / "resources" / "profiles", root.parent / "resources" / "profiles"]
+    cands.append(Path("/opt/orcaslicer/resources/profiles"))
+    return next((c for c in cands if c.is_dir()), None)
 
 
-def _orca_filament() -> dict[str, Any]:
-    return {
-        "type": "filament",
-        "name": "cadcode PLA",
-        "from": "User",
-        "instantiation": "true",
-        "filament_type": ["PLA"],
-        "filament_diameter": ["1.75"],
-        "nozzle_temperature": ["210"],
-        "nozzle_temperature_initial_layer": ["210"],
-        "hot_plate_temp": ["60"],
-        "hot_plate_temp_initial_layer": ["60"],
-    }
+def _orca_flatten_bases(profiles: Path) -> dict[str, dict[str, Any]] | None:
+    """Flatten the base machine/process/filament presets (resolving `inherits`)
+    into self-contained dicts. Cached per resources dir — the rglob is one-time."""
+    import json
+
+    key = str(profiles)
+    if key in _orca_profile_cache:
+        return _orca_profile_cache[key]
+    idx: dict[tuple[str, str], dict[str, Any]] = {}
+    for f in profiles.rglob("*.json"):
+        try:
+            d = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict) and "name" in d and "type" in d:
+            idx[(d["type"], d["name"])] = d
+
+    def flat(t: str, name: str, seen: tuple[str, ...] = ()) -> dict[str, Any]:
+        d = idx.get((t, name))
+        if d is None or name in seen:
+            return {}
+        base = flat(t, d["inherits"], (*seen, name)) if d.get("inherits") else {}
+        base.update({k: v for k, v in d.items() if k != "inherits"})
+        return base
+
+    bases = {kind: flat(kind, name) for kind, name in _ORCA_BASE.items()}
+    if not all(bases.values()):
+        return None  # a base preset went missing (Orca version drift) → fall back
+    _orca_profile_cache[key] = bases
+    return bases
 
 
 def _slice_orca(
     stl: Path, workdir: Path, bed: tuple[float, float], supports: bool, timeout_s: int
 ) -> dict[str, Any] | None:
-    """OrcaSlicer backend. CLI is profile-driven (no granular flags): we write a
-    flattened machine/process/filament JSON (all values as STRINGS — numeric
-    literals fail silently), slice with `--slice 0`, and read `plate_1.gcode`.
-    Runs under xvfb + software GL because OrcaSlicer initializes GTK even in CLI
-    mode. The raw G-code footer uses the same `estimated printing time` /
-    `filament used [cm3]` comments as PrusaSlicer."""
+    """OrcaSlicer backend. Writes a flattened, self-contained machine/process/
+    filament JSON (bed + infill + support overridden), slices with `--slice 0`,
+    and reads `plate_1.gcode`. Runs under xvfb + software GL because OrcaSlicer
+    initializes GTK even in CLI mode. The raw G-code footer uses the same
+    `estimated printing time` / `filament used [cm3]` comments as PrusaSlicer."""
+    import copy
     import json
 
-    machine = workdir / "machine.json"
-    process = workdir / "process.json"
-    filament = workdir / "filament.json"
+    profiles = _orca_resources()
+    bases = _orca_flatten_bases(profiles) if profiles else None
+    if bases is None:
+        return None
+    machine = copy.deepcopy(bases["machine"])
+    process = copy.deepcopy(bases["process"])
+    filament = copy.deepcopy(bases["filament"])
+    w, d = f"{bed[0]:g}", f"{bed[1]:g}"
+    machine["printable_area"] = ["0x0", f"{w}x0", f"{w}x{d}", f"0x{d}"]
+    process["sparse_infill_density"] = "15%"
+    process["enable_support"] = "1" if supports else "0"
+    if supports:
+        process["support_type"] = "normal(auto)"  # auto support only where needed
+        process["support_threshold_angle"] = "45"
+
+    mfile, pfile, ffile = workdir / "machine.json", workdir / "process.json", workdir / "filament.json"
+    mfile.write_text(json.dumps(machine))
+    pfile.write_text(json.dumps(process))
+    ffile.write_text(json.dumps(filament))
     outdir = workdir / "out"
-    datadir = workdir / "orca_data"
     outdir.mkdir(exist_ok=True)
-    datadir.mkdir(exist_ok=True)
-    machine.write_text(json.dumps(_orca_machine(bed)))
-    process.write_text(json.dumps(_orca_process(supports)))
-    filament.write_text(json.dumps(_orca_filament()))
 
     orca = _orca_bin() or "orca-slicer"
     inner = [
@@ -262,12 +274,10 @@ def _slice_orca(
         "0",
         "--arrange",
         "1",
-        "--datadir",
-        str(datadir),
         "--load-settings",
-        f"{machine};{process}",  # machine FIRST, process SECOND — order matters
+        f"{mfile};{pfile}",  # machine FIRST, process SECOND — order matters
         "--load-filaments",
-        str(filament),
+        str(ffile),
         "--outputdir",
         str(outdir),
         str(stl),
@@ -281,15 +291,11 @@ def _slice_orca(
         subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=True, env=env)
     except (subprocess.SubprocessError, OSError):
         return None
-    gcode = outdir / "plate_1.gcode"
-    if not gcode.exists():
-        # first plate can be named plate_1 or (single-object) plate_0 — grab any
-        found = sorted(outdir.glob("*.gcode"))
-        if not found:
-            return None
-        gcode = found[0]
+    found = sorted(outdir.glob("*.gcode"))  # plate_1.gcode, …
+    if not found:
+        return None
     try:
-        text = gcode.read_text(errors="ignore")
+        text = found[0].read_text(errors="ignore")
     except OSError:
         return None
     minutes = _parse_time(text, _PRUSA_TIME_RE) or _parse_time(text, _ORCA_TIME_RE)
@@ -297,7 +303,7 @@ def _slice_orca(
         return None
     fm = _PRUSA_FIL_RE.search(text) or _ORCA_FIL_RE.search(text)
     low = text.lower()
-    supported = supports and ("feature: support" in low or "support material" in low or "enable_support = 1" in low)
+    supported = supports and ("feature: support" in low or "type:support" in low or "support_material" in low)
     return {
         "minutes": round(minutes, 1),
         "filament_cm3": round(float(fm.group(1)), 2) if fm else 0.0,

@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The AppImage is Ubuntu-24.04-built (glibc 2.39); our base is trixie (2.41) ✓.
 ARG ORCA_VERSION=2.4.1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      wget xvfb \
+      wget xvfb xauth \
       libgtk-3-0t64 libwebkit2gtk-4.1-0 libglib2.0-0t64 \
       libgl1-mesa-dri libegl1 libosmesa6 \
       libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
