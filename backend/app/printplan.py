@@ -26,6 +26,12 @@ def _has_slicer() -> bool:
     return slicer_available()
 
 
+def _slicer_name() -> str:
+    from app.kernel.slicer import slicer_name
+
+    return slicer_name()
+
+
 def _orientations() -> list[tuple[str, float, float]]:
     """The six principal orientations as (label, X°, Y°)."""
     return [
@@ -382,6 +388,7 @@ def plan_print(
             for i, p in enumerate(plates)
         ],
         "slicer": _has_slicer(),
+        "slicer_name": _slicer_name(),  # "orca" | "prusa" | "none"
     }
     if want_objects:
         result["_objects"] = objs

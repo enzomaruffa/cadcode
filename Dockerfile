@@ -20,10 +20,32 @@ FROM python:3.12-slim AS app
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /bin/
 
 # OpenCASCADE (build123d / cadquery-ocp) runtime libs + git (for checkpoints)
-# + prusa-slicer (headless CLI) for exact print-time numbers on print plates
+# + prusa-slicer (headless CLI, fallback slicer for exact print times)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1 libglu1-mesa libxext6 libx11-6 libxrender1 libxcb1 libgomp1 \
       git ca-certificates prusa-slicer \
+    && rm -rf /var/lib/apt/lists/*
+
+# OrcaSlicer (preferred slicer — matches the daily driver). No apt package: pull
+# the Linux AppImage and extract it (no FUSE in Docker). It's a GTK/wxWidgets app
+# that inits a display even in CLI mode, so we also install Xvfb + software GL
+# (mesa/llvmpipe) and the GTK/WebKit/GStreamer runtime libs (trixie t64 names).
+# The AppImage is Ubuntu-24.04-built (glibc 2.39); our base is trixie (2.41) ✓.
+ARG ORCA_VERSION=2.4.1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      wget xvfb \
+      libgtk-3-0t64 libwebkit2gtk-4.1-0 libglib2.0-0t64 \
+      libgl1-mesa-dri libegl1 libosmesa6 \
+      libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+      libnotify4 libsecret-1-0 libsoup-3.0-0 \
+      fonts-dejavu-core \
+    && wget -q -O /tmp/orca.AppImage \
+        "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage" \
+    && chmod +x /tmp/orca.AppImage \
+    && cd /opt && /tmp/orca.AppImage --appimage-extract \
+    && mv squashfs-root orcaslicer \
+    && ln -s /opt/orcaslicer/AppRun /usr/local/bin/orca-slicer \
+    && rm /tmp/orca.AppImage \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend

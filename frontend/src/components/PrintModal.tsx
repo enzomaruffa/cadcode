@@ -35,7 +35,8 @@ interface Plan {
   fits?: boolean;
   total_min?: number; // shortest-path time to print ALL plates on one printer (support incl.)
   plates?: PlateInfo[];
-  slicer?: boolean; // prusa-slicer available server-side for exact times
+  slicer?: boolean; // a real slicer is available server-side for exact times
+  slicer_name?: string; // which engine: "orca" | "prusa" | "none"
 }
 
 // A finished slice: exact time + filament + whether the slicer actually laid support.
@@ -43,6 +44,7 @@ interface SliceResult {
   minutes: number;
   filament_cm3?: number;
   supported?: boolean;
+  slicer?: string; // engine that produced this number ("orca" | "prusa")
 }
 
 function fmtMin(min: number | undefined): string {
@@ -192,13 +194,19 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, plate }),
       });
-      const d: { ok?: boolean; minutes?: number; filament_cm3?: number; supported?: boolean; error?: string } =
-        await r.json();
+      const d: {
+        ok?: boolean;
+        minutes?: number;
+        filament_cm3?: number;
+        supported?: boolean;
+        slicer?: string;
+        error?: string;
+      } = await r.json();
       if (!live()) return; // a newer plan superseded this slice
       if (d.ok && d.minutes != null) {
         setExact((e) => ({
           ...e,
-          [key]: { minutes: d.minutes!, filament_cm3: d.filament_cm3, supported: d.supported },
+          [key]: { minutes: d.minutes!, filament_cm3: d.filament_cm3, supported: d.supported, slicer: d.slicer },
         }));
         if (supports) refreshCal(); // supported slices teach the estimator
       } else {
@@ -271,7 +279,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     if (res != null) {
       return (
         <>
-          {fmtMin(res.minutes)} (slicer)
+          {fmtMin(res.minutes)} ({res.slicer ?? plan?.slicer_name ?? "slicer"})
           {res.filament_cm3 ? ` · ${fmtCm3(res.filament_cm3)}` : ""}
           {res.supported ? " · incl. support" : ""}
         </>
@@ -451,7 +459,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                       {" · "}
                       {slicerTotal != null ? (
                         <>
-                          {fmtMin(slicerTotal)} (slicer){filTotal > 0 ? ` · ${fmtCm3(filTotal)}` : ""}
+                          {fmtMin(slicerTotal)} ({plan.slicer_name ?? "slicer"})
+                          {filTotal > 0 ? ` · ${fmtCm3(filTotal)}` : ""}
                         </>
                       ) : (
                         <>
