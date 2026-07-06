@@ -477,6 +477,35 @@ def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str, bo
     return items, bed, strategy, supports
 
 
+def _printer_args(payload: dict) -> tuple[str | None, str | None]:
+    """OrcaSlicer printer + filament preset names (None → generic defaults)."""
+    printer = payload.get("printer")
+    filament = payload.get("filament")
+    return (str(printer) if printer else None, str(filament) if filament else None)
+
+
+@app.get("/print/printers")
+async def print_printers() -> dict:
+    """Supported printers for the picker (OrcaSlicer catalog), grouped client-side
+    by vendor; picking one prefills the bed. Empty when Orca isn't the slicer."""
+    import asyncio
+
+    from app.kernel.slicer import orca_catalog_printers
+
+    return await asyncio.to_thread(orca_catalog_printers)
+
+
+@app.get("/print/filaments")
+async def print_filaments(vendor: str = "") -> dict:
+    """Filaments for the picker: generics + the printer vendor's own (the full
+    catalog is ~6k, so we scope it). Empty when Orca isn't the slicer."""
+    import asyncio
+
+    from app.kernel.slicer import orca_catalog_filaments
+
+    return await asyncio.to_thread(orca_catalog_filaments, vendor or None)
+
+
 @app.get("/print/parts")
 async def print_parts(project: str = "") -> dict:
     """Printable-part candidates for the picker — scoped to a project (its own
@@ -521,6 +550,7 @@ async def print_slice(payload: dict) -> dict:
     if not slicer_available():
         return {"ok": False, "error": "prusa-slicer isn't installed on this server"}
     items, bed, strategy, supports = _print_args(payload)
+    printer, filament = _printer_args(payload)
     plate_no = payload.get("plate")
 
     def _go() -> dict:
@@ -531,7 +561,7 @@ async def print_slice(payload: dict) -> dict:
         if plate_no is not None:
             plate_of = plan.get("_plate_of") or []
             objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
-        result = slice_minutes(objs, bed, supports=supports)
+        result = slice_minutes(objs, bed, supports=supports, printer=printer, filament=filament)
         if result is None:
             return {"ok": False, "error": "slicing failed"}
         # Teach the instant estimator: pair this plate's features with the

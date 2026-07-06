@@ -58,6 +58,20 @@ function fmtCm3(v: number | undefined): string {
   return `${v.toFixed(1)} cm³`;
 }
 
+// A supported printer from OrcaSlicer's catalog (picking one prefills the bed).
+interface Printer {
+  name: string;
+  vendor: string;
+  bed_w?: number | null;
+  bed_d?: number | null;
+  nozzle?: string | null;
+}
+interface Filament {
+  name: string;
+  vendor: string;
+  type: string;
+}
+
 // One printable item the user can add to the plate.
 interface Row {
   key: string;
@@ -65,6 +79,9 @@ interface Row {
   project?: string;
   name: string;
 }
+
+const LS_PRINTER = "cadcode.print.printer";
+const LS_FILAMENT = "cadcode.print.filament";
 
 type Strategy = "material" | "plates" | "fastest";
 
@@ -94,6 +111,21 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [exact, setExact] = useState<Record<number, SliceResult | "working">>({});
   const [calN, setCalN] = useState(0); // how many real slices the estimator learned from
   const planToken = useRef(0); // bump per plan → in-flight background slices from an old plan are dropped
+
+  // Printer + filament (OrcaSlicer catalog). Picking a printer prefills the bed;
+  // both relay to the slicer so numbers match a real machine. Persisted so the
+  // user's Bambu (etc.) sticks across sessions.
+  const [printers, setPrinters] = useState<Printer[]>([]);
+  const [printer, setPrinter] = useState<string>(() => localStorage.getItem(LS_PRINTER) ?? "");
+  const [filaments, setFilaments] = useState<Filament[]>([]);
+  const [filament, setFilament] = useState<string>(() => localStorage.getItem(LS_FILAMENT) ?? "");
+  const curPrinter = useMemo(() => printers.find((p) => p.name === printer), [printers, printer]);
+  const vendors = useMemo(() => [...new Set(printers.map((p) => p.vendor))].sort(), [printers]);
+  const models = useMemo(
+    () => printers.filter((p) => p.vendor === curPrinter?.vendor).sort((a, b) => a.name.localeCompare(b.name)),
+    [printers, curPrinter?.vendor],
+  );
+  const filamentVendors = useMemo(() => [...new Set(filaments.map((f) => f.vendor))], [filaments]);
 
   const refreshCal = () =>
     fetch(`${HTTP_URL}/print/calibration`)
@@ -132,6 +164,65 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Select a printer + prefill its bed (still tweakable below). Kept out of an
+  // effect so the bed only snaps to the printer on an explicit pick, and lint's
+  // set-state-in-effect rule stays happy.
+  const pickPrinter = (p: Printer | undefined) => {
+    if (!p) return;
+    setPrinter(p.name);
+    if (p.bed_w && p.bed_d) {
+      setBedW(Math.round(p.bed_w));
+      setBedD(Math.round(p.bed_d));
+    }
+  };
+
+  // Load the printer catalog once (empty when Orca isn't the slicer). Pick the
+  // saved printer if still valid, else the server default (a Bambu Lab).
+  useEffect(() => {
+    let alive = true;
+    fetch(`${HTTP_URL}/print/printers`)
+      .then((r) => r.json())
+      .then((d: { printers?: Printer[]; default?: string | null }) => {
+        if (!alive || !d.printers?.length) return;
+        setPrinters(d.printers);
+        const saved = localStorage.getItem(LS_PRINTER);
+        const chosen = saved && d.printers.some((p) => p.name === saved) ? saved : (d.default ?? d.printers[0].name);
+        pickPrinter(d.printers.find((p) => p.name === chosen));
+      })
+      .catch(() => void 0);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Filaments are scoped to the printer's vendor (+ generics) — the full catalog
+  // is ~6k. Refetch when the vendor changes; keep the saved filament if present.
+  useEffect(() => {
+    if (!printers.length) return;
+    const vendor = curPrinter?.vendor ?? "";
+    let alive = true;
+    fetch(`${HTTP_URL}/print/filaments?vendor=${encodeURIComponent(vendor)}`)
+      .then((r) => r.json())
+      .then((d: { filaments?: Filament[]; default?: string | null }) => {
+        if (!alive || !d.filaments) return;
+        setFilaments(d.filaments);
+        setFilament((cur) =>
+          cur && d.filaments!.some((f) => f.name === cur) ? cur : (d.default ?? d.filaments![0]?.name ?? ""),
+        );
+      })
+      .catch(() => void 0);
+    return () => {
+      alive = false;
+    };
+  }, [curPrinter?.vendor, printers.length]);
+
+  useEffect(() => {
+    if (printer) localStorage.setItem(LS_PRINTER, printer);
+  }, [printer]);
+  useEffect(() => {
+    if (filament) localStorage.setItem(LS_FILAMENT, filament);
+  }, [filament]);
 
   const items = useMemo(
     () => rows.filter((r) => (qty[r.key] ?? 0) > 0).map((r) => ({ project: r.project, name: r.name, qty: qty[r.key] })),
@@ -192,7 +283,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/slice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, plate }),
+        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, printer, filament, plate }),
       });
       const d: {
         ok?: boolean;
@@ -319,6 +410,60 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             {calN > 0 ? ` Estimates are self-calibrating (${calN} slices learned so far).` : ""}
           </p>
 
+          {printers.length > 0 && (
+            <>
+              <div className="print-picker">
+                <span>printer</span>
+                <select
+                  className="print-select"
+                  value={curPrinter?.vendor ?? ""}
+                  onChange={(e) => pickPrinter(printers.find((p) => p.vendor === e.target.value))}
+                  title="Printer brand"
+                >
+                  {vendors.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="print-select grow"
+                  value={printer}
+                  onChange={(e) => pickPrinter(printers.find((p) => p.name === e.target.value))}
+                  title="Printer model — prefills the bed size"
+                >
+                  {models.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name.replace(`${p.vendor} `, "")}
+                      {p.bed_w ? ` — ${Math.round(p.bed_w)}×${Math.round(p.bed_d ?? p.bed_w)}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="print-picker">
+                <span>filament</span>
+                <select
+                  className="print-select grow"
+                  value={filament}
+                  onChange={(e) => setFilament(e.target.value)}
+                  title="Filament preset (tweak temps in your slicer if needed)"
+                >
+                  {filamentVendors.map((v) => (
+                    <optgroup key={v} label={v}>
+                      {filaments
+                        .filter((f) => f.vendor === v)
+                        .map((f) => (
+                          <option key={f.name} value={f.name}>
+                            {f.name} · {f.type}
+                          </option>
+                        ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
           <div className="print-bed">
             <span>bed</span>
             <input
@@ -336,7 +481,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
               max={1000}
               onChange={(e) => setBedD(parseFloat(e.target.value) || 220)}
             />
-            <span>mm</span>
+            <span>mm{curPrinter ? " (from printer — tweakable)" : ""}</span>
           </div>
 
           <div className="scope-toggle print-strategy">

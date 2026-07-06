@@ -110,12 +110,15 @@ def slice_minutes(
     bed: tuple[float, float] = (220.0, 220.0),
     timeout_s: int = 180,
     supports: bool = True,
+    printer: str | None = None,
+    filament: str | None = None,
 ) -> dict[str, Any] | None:
     """Slice the given solids as ONE plate; returns {minutes, filament_cm3,
-    supported, slicer} or None (no slicer / slicing failed). `supports=True`
-    auto-adds support material where overhangs need it; `False` prints
-    supportless (overhangs at the user's own risk). Tries the preferred backend
-    first, falling back to the other if it fails (unless CAD_SLICER pins one)."""
+    supported, slicer, printer?, filament?} or None (no slicer / slicing failed).
+    `supports=True` auto-adds support material where overhangs need it; `False`
+    prints supportless. `printer`/`filament` are OrcaSlicer preset names (ignored
+    by the Prusa fallback). Tries the preferred backend first, falling back to the
+    other if it fails (unless CAD_SLICER pins one)."""
     order = _backend_order()
     if not objs or not order:
         return None
@@ -126,8 +129,10 @@ def slice_minutes(
         with tempfile.TemporaryDirectory(prefix="cadslice_") as d:
             stl = Path(d) / "plate.stl"
             export_stl(obj, str(stl))
-            fn = _slice_orca if backend == "orca" else _slice_prusa
-            res = fn(stl, Path(d), bed, supports, timeout_s)
+            if backend == "orca":
+                res = _slice_orca(stl, Path(d), bed, supports, timeout_s, printer, filament)
+            else:
+                res = _slice_prusa(stl, Path(d), bed, supports, timeout_s)
         if res is not None:
             return res
     return None
@@ -176,19 +181,30 @@ def _slice_prusa(
 
 
 # OrcaSlicer's CLI needs a self-contained (flattened) preset: `--load-settings`
-# does NOT resolve a preset's `inherits` chain, and a process is only accepted if
-# its `compatible_printers` lists the machine's exact `name`. So we start from a
-# bundled, mutually-compatible system triple (Generic Marlin + its 0.2mm process
-# + Generic PLA), flatten each `inherits` chain into one dict, then override bed /
-# infill / support. Flattening keeps the process's `compatible_printers`
-# ("MyMarlin 0.4 nozzle") matching the machine's name → the -17 "printer not
-# compatible" error goes away.
-_ORCA_BASE = {
+# does NOT resolve a preset's `inherits` chain, and a process/filament is only
+# accepted if its `compatible_printers` lists the machine's exact `name`. So for
+# any chosen printer we: flatten that machine, find a compatible ~0.2mm process
+# (flatten it), flatten the chosen filament, then FORCE the compat fields to the
+# machine name — which sidesteps the -17 "printer not compatible" error for any
+# printer×process×filament combo. A generic Marlin/PLA triple is the fallback
+# when no printer is chosen.
+_ORCA_DEFAULT = {
+    "printer": "Bambu Lab X1 Carbon 0.4 nozzle",
+    "filament": "Generic PLA @System",
+}
+_ORCA_FALLBACK = {  # used when no printer is picked / a name goes missing
     "machine": "MyMarlin 0.4 nozzle",
     "process": "0.20mm Standard @MyMarlin",
     "filament": "Generic PLA @System",
 }
-_orca_profile_cache: dict[str, dict[str, dict[str, Any]]] = {}
+# name → OrcaFilamentLibrary vendor label for the generic (always-offered) filaments
+_ORCA_GENERIC_VENDOR = "OrcaFilamentLibrary"
+
+# lazily-built, cached-for-process-lifetime indexes over resources/profiles
+_orca_idx: dict[tuple[str, str], dict[str, Any]] | None = None
+_orca_vendor: dict[tuple[str, str], str] = {}
+_orca_flat_cache: dict[tuple[str, str], dict[str, Any]] = {}
+_orca_proc_for: dict[str, str] = {}  # machine name → best ~0.2mm process name
 
 
 def _orca_resources() -> Path | None:
@@ -202,58 +218,185 @@ def _orca_resources() -> Path | None:
     return next((c for c in cands if c.is_dir()), None)
 
 
-def _orca_flatten_bases(profiles: Path) -> dict[str, dict[str, Any]] | None:
-    """Flatten the base machine/process/filament presets (resolving `inherits`)
-    into self-contained dicts. Cached per resources dir — the rglob is one-time."""
+def _orca_load_index() -> dict[tuple[str, str], dict[str, Any]]:
+    """Index every preset by (type, name); record its vendor (top dir). One-time."""
+    global _orca_idx
+    if _orca_idx is not None:
+        return _orca_idx
     import json
 
-    key = str(profiles)
-    if key in _orca_profile_cache:
-        return _orca_profile_cache[key]
     idx: dict[tuple[str, str], dict[str, Any]] = {}
-    for f in profiles.rglob("*.json"):
-        try:
-            d = json.loads(f.read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(d, dict) and "name" in d and "type" in d:
-            idx[(d["type"], d["name"])] = d
+    profiles = _orca_resources()
+    if profiles is not None:
+        root = str(profiles)
+        for f in profiles.rglob("*.json"):
+            try:
+                d = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(d, dict) and "name" in d and "type" in d:
+                key = (d["type"], d["name"])
+                idx[key] = d
+                rel = str(f)[len(root) + 1 :]
+                _orca_vendor[key] = rel.split("/")[0]
+    _orca_idx = idx
+    return idx
 
-    def flat(t: str, name: str, seen: tuple[str, ...] = ()) -> dict[str, Any]:
-        d = idx.get((t, name))
-        if d is None or name in seen:
+
+def _orca_flatten(kind: str, name: str) -> dict[str, Any]:
+    """Flatten a preset's `inherits` chain into one self-contained dict (cached)."""
+    ckey = (kind, name)
+    if ckey in _orca_flat_cache:
+        return _orca_flat_cache[ckey]
+    idx = _orca_load_index()
+
+    def flat(t: str, nm: str, seen: tuple[str, ...] = ()) -> dict[str, Any]:
+        d = idx.get((t, nm))
+        if d is None or nm in seen:
             return {}
-        base = flat(t, d["inherits"], (*seen, name)) if d.get("inherits") else {}
+        base = flat(t, d["inherits"], (*seen, nm)) if d.get("inherits") else {}
         base.update({k: v for k, v in d.items() if k != "inherits"})
         return base
 
-    bases = {kind: flat(kind, name) for kind, name in _ORCA_BASE.items()}
-    if not all(bases.values()):
-        return None  # a base preset went missing (Orca version drift) → fall back
-    _orca_profile_cache[key] = bases
-    return bases
+    out = flat(kind, name)
+    _orca_flat_cache[ckey] = out
+    return out
+
+
+def _orca_bed_of(machine_name: str) -> tuple[float, float] | None:
+    """Bed (w, d) mm from a machine preset's flattened `printable_area` rectangle."""
+    area = _orca_flatten("machine", machine_name).get("printable_area")
+    if not isinstance(area, list) or len(area) < 3:
+        return None
+    try:
+        xs, ys = [], []
+        for pt in area:
+            x, y = str(pt).split("x")
+            xs.append(float(x))
+            ys.append(float(y))
+        return (max(xs) - min(xs), max(ys) - min(ys))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _orca_process_for(machine_name: str) -> str:
+    """Best ~0.2mm process compatible with the machine (cached). Falls back to the
+    generic Marlin 0.2mm process (compat is forced later regardless)."""
+    if not _orca_proc_for:
+        idx = _orca_load_index()
+        for t, nm in idx:
+            if t != "process":
+                continue
+            fp = _orca_flatten("process", nm)
+            if str(fp.get("instantiation", "")).lower() != "true":
+                continue
+            compat = fp.get("compatible_printers") or []
+            if not isinstance(compat, list):
+                continue
+            try:
+                lh = float(fp.get("layer_height", 0) or 0)
+            except (ValueError, TypeError):
+                lh = 0.0
+            # prefer exactly 0.2mm; note the closest otherwise
+            score = 0 if abs(lh - 0.2) < 1e-6 else 1
+            for m in compat:
+                cur = _orca_proc_for.get(m)
+                if cur is None or (score == 0 and "0.20mm" not in cur and "0.20mm" in nm):
+                    if score == 0 or cur is None:
+                        _orca_proc_for[m] = nm
+    return _orca_proc_for.get(machine_name, _ORCA_FALLBACK["process"])
+
+
+def orca_catalog_printers() -> dict[str, Any]:
+    """All instantiable printers grouped for the picker: {printers:[{name, vendor,
+    bed_w, bed_d, nozzle}], default}. Empty when Orca isn't the active slicer."""
+    if "orca" not in _backend_order():
+        return {"printers": [], "default": None}
+    idx = _orca_load_index()
+    out = []
+    for (t, nm), d in idx.items():
+        if t != "machine" or str(d.get("instantiation", "")).lower() != "true":
+            continue
+        bed = _orca_bed_of(nm)
+        nozzle = _orca_flatten("machine", nm).get("nozzle_diameter")
+        noz = nozzle[0] if isinstance(nozzle, list) and nozzle else nozzle
+        out.append(
+            {
+                "name": nm,
+                "vendor": _orca_vendor.get((t, nm), "?"),
+                "bed_w": round(bed[0], 1) if bed else None,
+                "bed_d": round(bed[1], 1) if bed else None,
+                "nozzle": noz,
+            }
+        )
+    out.sort(key=lambda p: (p["vendor"], p["name"]))
+    default = _ORCA_DEFAULT["printer"] if any(p["name"] == _ORCA_DEFAULT["printer"] for p in out) else None
+    return {"printers": out, "default": default}
+
+
+def orca_catalog_filaments(vendor: str | None = None) -> dict[str, Any]:
+    """Filaments for the picker: generics + the printer vendor's own, so the list
+    stays small (the full catalog is ~6k). {filaments:[{name, vendor, type}], default}."""
+    if "orca" not in _backend_order():
+        return {"filaments": [], "default": None}
+    idx = _orca_load_index()
+    keep = {_ORCA_GENERIC_VENDOR}
+    if vendor:
+        keep.add(vendor)
+    out = []
+    for (t, nm), d in idx.items():
+        if t != "filament" or str(d.get("instantiation", "")).lower() != "true":
+            continue
+        v = _orca_vendor.get((t, nm), "?")
+        if v not in keep:
+            continue
+        ft = _orca_flatten("filament", nm).get("filament_type")
+        out.append({"name": nm, "vendor": v, "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
+    out.sort(key=lambda f: (f["vendor"] != _ORCA_GENERIC_VENDOR, f["vendor"], f["name"]))
+    default = _ORCA_DEFAULT["filament"] if any(f["name"] == _ORCA_DEFAULT["filament"] for f in out) else None
+    return {"filaments": out, "default": default}
 
 
 def _slice_orca(
-    stl: Path, workdir: Path, bed: tuple[float, float], supports: bool, timeout_s: int
+    stl: Path,
+    workdir: Path,
+    bed: tuple[float, float],
+    supports: bool,
+    timeout_s: int,
+    printer: str | None = None,
+    filament: str | None = None,
 ) -> dict[str, Any] | None:
-    """OrcaSlicer backend. Writes a flattened, self-contained machine/process/
-    filament JSON (bed + infill + support overridden), slices with `--slice 0`,
-    and reads `plate_1.gcode`. Runs under xvfb + software GL because OrcaSlicer
-    initializes GTK even in CLI mode. The raw G-code footer uses the same
-    `estimated printing time` / `filament used [cm3]` comments as PrusaSlicer."""
+    """OrcaSlicer backend. Flattens the chosen printer + a compatible ~0.2mm
+    process + the chosen filament into self-contained JSON (compat FORCED to the
+    machine name so any combo slices), overrides bed/infill/support, slices with
+    `--slice 0`, and reads `plate_1.gcode`. Runs under xvfb + software GL because
+    OrcaSlicer initializes GTK even in CLI mode. The raw G-code footer uses the
+    same `estimated printing time` / `filament used [cm3]` comments as Prusa."""
     import copy
     import json
 
-    profiles = _orca_resources()
-    bases = _orca_flatten_bases(profiles) if profiles else None
-    if bases is None:
+    if _orca_resources() is None:
         return None
-    machine = copy.deepcopy(bases["machine"])
-    process = copy.deepcopy(bases["process"])
-    filament = copy.deepcopy(bases["filament"])
+    machine_name = printer if (printer and _orca_load_index().get(("machine", printer))) else _ORCA_FALLBACK["machine"]
+    process_name = _orca_process_for(machine_name)
+    fil_name = filament if (filament and _orca_load_index().get(("filament", filament))) else _ORCA_FALLBACK["filament"]
+
+    machine = copy.deepcopy(_orca_flatten("machine", machine_name))
+    process = copy.deepcopy(_orca_flatten("process", process_name))
+    fdict = copy.deepcopy(_orca_flatten("filament", fil_name))
+    if not (machine and process and fdict):
+        return None
+    # FORCE mutual compatibility (bypasses the -17 gate for any combo)
+    process["compatible_printers"] = [machine_name]
+    process["compatible_printers_condition"] = ""
+    fdict["compatible_printers"] = [machine_name]
+    fdict["compatible_printers_condition"] = ""
+    fdict["compatible_prints"] = []
+    fdict["compatible_prints_condition"] = ""
+
     w, d = f"{bed[0]:g}", f"{bed[1]:g}"
     machine["printable_area"] = ["0x0", f"{w}x0", f"{w}x{d}", f"0x{d}"]
+    machine["printable_height"] = machine.get("printable_height", "250")
     process["sparse_infill_density"] = "15%"
     process["enable_support"] = "1" if supports else "0"
     if supports:
@@ -263,7 +406,7 @@ def _slice_orca(
     mfile, pfile, ffile = workdir / "machine.json", workdir / "process.json", workdir / "filament.json"
     mfile.write_text(json.dumps(machine))
     pfile.write_text(json.dumps(process))
-    ffile.write_text(json.dumps(filament))
+    ffile.write_text(json.dumps(fdict))
     outdir = workdir / "out"
     outdir.mkdir(exist_ok=True)
 
@@ -309,4 +452,6 @@ def _slice_orca(
         "filament_cm3": round(float(fm.group(1)), 2) if fm else 0.0,
         "supported": bool(supported),
         "slicer": "orca",
+        "printer": machine_name,
+        "filament": fil_name,
     }

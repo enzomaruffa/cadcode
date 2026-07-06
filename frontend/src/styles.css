@@ -2395,6 +2395,35 @@ textarea {
   font-size: var(--fs-sm);
   color: var(--accent);
 }
+.print-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.print-picker > span:first-child {
+  min-width: 52px;
+}
+.print-select {
+  background: var(--bg-pane);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px var(--sp-2);
+  font-size: var(--fs-xs);
+  font-family: var(--font-ui);
+  max-width: 60%;
+}
+.print-select.grow {
+  flex: 1;
+  min-width: 0;
+}
+.print-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .print-plate-dl {
   display: flex;
   align-items: center;
