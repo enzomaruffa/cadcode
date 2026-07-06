@@ -334,9 +334,11 @@ def orca_catalog_printers() -> dict[str, Any]:
     return {"printers": out, "default": default}
 
 
-def orca_catalog_filaments(vendor: str | None = None) -> dict[str, Any]:
-    """Filaments for the picker: generics + the printer vendor's own, so the list
-    stays small (the full catalog is ~6k). {filaments:[{name, vendor, type}], default}."""
+def orca_catalog_filaments(printer: str | None = None) -> dict[str, Any]:
+    """Filaments for the picker: the always-broad generics ("Generic …") plus the
+    ones OrcaSlicer marks compatible with the chosen printer (same set its GUI
+    shows) — the raw catalog is ~6k, per-machine-variant, so this keeps it to a
+    usable list. {filaments:[{name, vendor, type}], default}."""
     if "orca" not in _backend_order():
         return {"filaments": [], "default": None}
     idx = _orca_load_index()
@@ -345,15 +347,19 @@ def orca_catalog_filaments(vendor: str | None = None) -> dict[str, Any]:
         if t != "filament" or str(d.get("instantiation", "")).lower() != "true":
             continue
         v = _orca_vendor.get((t, nm), "?")
-        # The generic library holds ~2k branded @System profiles — keep only the
-        # true "Generic …" ones; plus everything from the printer's own vendor.
         is_generic = v == _ORCA_GENERIC_VENDOR and nm.startswith("Generic ")
-        if not (is_generic or (vendor and v == vendor)):
+        compatible = False
+        if printer and not is_generic:
+            cp = _orca_flatten("filament", nm).get("compatible_printers")
+            compatible = isinstance(cp, list) and printer in cp
+        if not (is_generic or compatible):
             continue
         ft = _orca_flatten("filament", nm).get("filament_type")
-        out.append({"name": nm, "vendor": v, "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
-    out.sort(key=lambda f: (f["vendor"] != _ORCA_GENERIC_VENDOR, f["vendor"], f["name"]))
+        out.append({"name": nm, "vendor": ("Generic" if is_generic else v), "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
+    out.sort(key=lambda f: (f["vendor"] != "Generic", f["vendor"], f["name"]))
     default = _ORCA_DEFAULT["filament"] if any(f["name"] == _ORCA_DEFAULT["filament"] for f in out) else None
+    if default is None and out:
+        default = next((f["name"] for f in out if f["type"] == "PLA"), out[0]["name"])
     return {"filaments": out, "default": default}
 
 

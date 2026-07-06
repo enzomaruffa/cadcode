@@ -496,14 +496,14 @@ async def print_printers() -> dict:
 
 
 @app.get("/print/filaments")
-async def print_filaments(vendor: str = "") -> dict:
-    """Filaments for the picker: generics + the printer vendor's own (the full
-    catalog is ~6k, so we scope it). Empty when Orca isn't the slicer."""
+async def print_filaments(printer: str = "") -> dict:
+    """Filaments for the picker: generics + those compatible with the chosen
+    printer (the full catalog is ~6k, so we scope it). Empty w/o Orca."""
     import asyncio
 
     from app.kernel.slicer import orca_catalog_filaments
 
-    return await asyncio.to_thread(orca_catalog_filaments, vendor or None)
+    return await asyncio.to_thread(orca_catalog_filaments, printer or None)
 
 
 @app.get("/print/parts")

@@ -196,13 +196,12 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  // Filaments are scoped to the printer's vendor (+ generics) — the full catalog
-  // is ~6k. Refetch when the vendor changes; keep the saved filament if present.
+  // Filaments are scoped to the chosen printer (generics + printer-compatible) —
+  // the full catalog is ~6k. Refetch on printer change; keep the saved filament.
   useEffect(() => {
-    if (!printers.length) return;
-    const vendor = curPrinter?.vendor ?? "";
+    if (!printer) return;
     let alive = true;
-    fetch(`${HTTP_URL}/print/filaments?vendor=${encodeURIComponent(vendor)}`)
+    fetch(`${HTTP_URL}/print/filaments?printer=${encodeURIComponent(printer)}`)
       .then((r) => r.json())
       .then((d: { filaments?: Filament[]; default?: string | null }) => {
         if (!alive || !d.filaments) return;
@@ -215,7 +214,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     return () => {
       alive = false;
     };
-  }, [curPrinter?.vendor, printers.length]);
+  }, [printer]);
 
   useEffect(() => {
     if (printer) localStorage.setItem(LS_PRINTER, printer);
