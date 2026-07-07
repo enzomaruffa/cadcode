@@ -17,7 +17,7 @@ import { SelectionHighlight } from "../interaction/SelectionHighlight";
 import { Section, type SectionAxis } from "../interaction/Section";
 import { Measure } from "../interaction/Measure";
 import { PhysicalOverlay, type PhysicalData } from "../interaction/PhysicalOverlay";
-import { Physics } from "../interaction/Physics";
+import { PhysicsClient } from "../physics/PhysicsClient";
 
 export type InteractionMode = "select" | "measure";
 
@@ -48,13 +48,11 @@ export class CadViewer {
   private physical: PhysicalOverlay;
   private grid: Grid;
   private gizmo: Gizmo;
-  private physics: Physics;
+  private physics: PhysicsClient;
   private mode: InteractionMode = "select";
 
   private framedOnce = false;
   private rafId: number | null = null;
-  private physicsRaf: number | null = null;
-  private lastPhysicsT = 0;
   private disposed = false;
   // Motion sim: leaves currently flashed for collision → their original color.
   private flashed = new Map<string, THREE.Color>();
@@ -94,10 +92,11 @@ export class CadViewer {
     this.physical = new PhysicalOverlay(this.scene, container);
     this.grid = new Grid(this.scene);
     this.gizmo = new Gizmo();
-    this.physics = new Physics(
+    this.physics = new PhysicsClient(
       this.renderer.domElement,
       () => this.rig.camera,
       (enabled) => (this.controls.controls.enabled = enabled),
+      () => this.requestRender(),
     );
 
     this.controller = new InteractionController(
@@ -368,14 +367,12 @@ export class CadViewer {
     if (this.disposed || !this.sceneGraph || this.physics.active) return;
     this.selection.clear();
     this.setPicking(false); // the physics grab owns the pointer while playing
+    // The solver runs in a Web Worker and streams transforms back; it drives the
+    // render itself (via the requestRender callback) — no main-thread step loop.
     this.physics.start(this.sceneGraph);
-    this.lastPhysicsT = performance.now();
-    this.physicsLoop();
   }
 
   stopPhysics(): void {
-    if (this.physicsRaf != null) cancelAnimationFrame(this.physicsRaf);
-    this.physicsRaf = null;
     if (this.physics.active) this.physics.stop();
     if (!this.disposed) this.setPicking(true);
     this.requestRender();
@@ -389,21 +386,10 @@ export class CadViewer {
     return this.physics.active;
   }
 
-  private physicsLoop(): void {
-    if (this.disposed || !this.physics.active) return;
-    const now = performance.now();
-    const dt = Math.min((now - this.lastPhysicsT) / 1000, 1 / 30);
-    this.lastPhysicsT = now;
-    this.physics.step(dt);
-    this.draw();
-    this.physicsRaf = requestAnimationFrame(() => this.physicsLoop());
-  }
-
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     if (this.rafId != null) cancelAnimationFrame(this.rafId);
-    if (this.physicsRaf != null) cancelAnimationFrame(this.physicsRaf);
     this.physics.dispose();
     this.controller.dispose();
     this.controls.dispose();
