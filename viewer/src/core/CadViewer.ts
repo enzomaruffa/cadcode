@@ -51,6 +51,7 @@ export class CadViewer {
   private gizmo: Gizmo;
   private physics: PhysicsClient;
   private joints: RawJoint[] = []; // assembly joint graph for the articulated sim
+  private explodeOrig: Map<object, THREE.Vector3> | null = null; // per-leaf home positions
   private mode: InteractionMode = "select";
 
   private framedOnce = false;
@@ -122,6 +123,7 @@ export class CadViewer {
 
     // A rebuild replaces the leaves the physics bodies point at — stop the sim.
     if (this.physics.active) this.stopPhysics();
+    this.explodeOrig = null; // fresh leaves → re-capture explode home positions
     this.clearGraph();
     const sg = buildSceneGraph(shapes, this.preset, this.resolution);
     this.sceneGraph = sg;
@@ -368,6 +370,7 @@ export class CadViewer {
   startPhysics(): void {
     if (this.disposed || !this.sceneGraph || this.physics.active) return;
     this.selection.clear();
+    if (this.explodeOrig) this.setExplode(0); // physics starts from the assembled pose
     this.setPicking(false); // the physics grab owns the pointer while playing
     // The solver runs in a Web Worker and streams transforms back; it drives the
     // render itself (via the requestRender callback) — no main-thread step loop.
@@ -378,6 +381,25 @@ export class CadViewer {
    *  articulated constraints). Set from the geometry payload before play. */
   setJoints(joints: RawJoint[]): void {
     this.joints = joints;
+  }
+
+  /** Exploded view: slide each part radially out from the assembly center by
+   *  `factor` (0 = assembled, 1 = full spread). Reversible; reset on rebuild. */
+  setExplode(factor: number): void {
+    const sg = this.sceneGraph;
+    if (!sg) return;
+    if (!this.explodeOrig) {
+      this.explodeOrig = new Map();
+      for (const leaf of sg.leaves) this.explodeOrig.set(leaf, leaf.group.position.clone());
+    }
+    const center = new THREE.Vector3();
+    sg.bbox.getCenter(center);
+    for (const leaf of sg.leaves) {
+      const orig = this.explodeOrig.get(leaf);
+      if (!orig) continue;
+      leaf.group.position.copy(orig).addScaledVector(orig.clone().sub(center), factor);
+    }
+    this.requestRender();
   }
 
   stopPhysics(): void {

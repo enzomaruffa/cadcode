@@ -14,6 +14,7 @@ export function Viewport() {
 
   const [grid, setGrid] = useState(true);
   const [physics, setPhysics] = useState(false);
+  const [explode, setExplode] = useState(0); // exploded-view spread (0–1)
 
   const shapes = useStore((s) => s.shapes);
   const rev = useStore((s) => s.geometryRev);
@@ -25,6 +26,11 @@ export function Viewport() {
   const simFrames = useStore((s) => s.simFrames);
   const simFrame = useStore((s) => s.simFrame);
   const simPlaying = useStore((s) => s.simPlaying);
+
+  // Apply the exploded-view spread; re-apply on new geometry, skip during physics.
+  useEffect(() => {
+    if (!physics) viewerRef.current?.setExplode(explode);
+  }, [explode, rev, physics]);
 
   // Motion playback: advance the frame cursor ~20fps while playing.
   useEffect(() => {
@@ -169,6 +175,20 @@ export function Viewport() {
             </button>
           )}
         </div>
+        {!physics && (
+          <div className="vp-group" title="Exploded view — spread parts apart along their assembly axes">
+            <span className="vp-label">explode</span>
+            <input
+              className="vp-slider"
+              type="range"
+              min={0}
+              max={1}
+              step={0.02}
+              value={explode}
+              onChange={(e) => setExplode(parseFloat(e.target.value))}
+            />
+          </div>
+        )}
       </div>
     </>
   );
