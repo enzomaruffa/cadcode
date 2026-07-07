@@ -12,9 +12,33 @@ export interface BodyInit {
   ccd: boolean;
 }
 
+// A constraint as it comes from the backend joint graph (part names + local axes).
+export interface RawJoint {
+  kind: "revolute" | "prismatic" | "spherical" | "cylindrical" | "fixed";
+  a: string; // show name of part A
+  b: string; // show name of part B
+  anchorA: [number, number, number];
+  anchorB: [number, number, number];
+  axisA: [number, number, number];
+  axisB: [number, number, number];
+  range: [number, number] | null; // degrees (revolute) or mm (prismatic)
+}
+
+// A constraint resolved to body indices + a single DOF axis in body A's frame.
+export interface JointInit {
+  kind: RawJoint["kind"];
+  a: number;
+  b: number;
+  anchorA: [number, number, number];
+  anchorB: [number, number, number];
+  axis: [number, number, number];
+  range: [number, number] | null;
+}
+
 export interface InitMsg {
   type: "init";
   bodies: BodyInit[];
+  joints: JointInit[];
   gravity: [number, number, number];
   groundZ: number;
   extent: number; // ground half-extent (a big thin floor box)

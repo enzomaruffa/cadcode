@@ -70,6 +70,29 @@ async function onInit(m: InitMsg): Promise<void> {
   }
   transforms = new Float32Array(bodies.length * FLOATS_PER_BODY);
 
+  // Articulation: the build123d joint graph → Rapier constraints. A revolute
+  // joint becomes a hinge (grab a linked part, it swings on its real axis);
+  // prismatic a slider; fixed a weld. Motion ranges become joint limits.
+  for (const j of m.joints) {
+    const a = bodies[j.a];
+    const b = bodies[j.b];
+    if (!a || !b) continue;
+    const anchorA = { x: j.anchorA[0], y: j.anchorA[1], z: j.anchorA[2] };
+    const anchorB = { x: j.anchorB[0], y: j.anchorB[1], z: j.anchorB[2] };
+    const axis = { x: j.axis[0], y: j.axis[1], z: j.axis[2] };
+    let params: RAPIER.JointData;
+    if (j.kind === "revolute" || j.kind === "cylindrical") params = RAPIER.JointData.revolute(anchorA, anchorB, axis);
+    else if (j.kind === "prismatic") params = RAPIER.JointData.prismatic(anchorA, anchorB, axis);
+    else if (j.kind === "spherical") params = RAPIER.JointData.spherical(anchorA, anchorB);
+    else params = RAPIER.JointData.fixed(anchorA, { w: 1, x: 0, y: 0, z: 0 }, anchorB, { w: 1, x: 0, y: 0, z: 0 });
+    const joint = world.createImpulseJoint(params, a, b, true);
+    if (j.range && (j.kind === "revolute" || j.kind === "prismatic")) {
+      const rad = j.kind === "revolute" ? Math.PI / 180 : 1;
+      const jj = joint as RAPIER.RevoluteImpulseJoint | RAPIER.PrismaticImpulseJoint;
+      if (typeof jj.setLimits === "function") jj.setLimits(j.range[0] * rad, j.range[1] * rad);
+    }
+  }
+
   // Kinematic drag target (moved by the pointer via setNextKinematicTranslation).
   cursor = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
 

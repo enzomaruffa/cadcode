@@ -64,6 +64,7 @@ class Session:
                     bbox=result.bbox,
                     ops=result.ops,
                     specs=result.specs,
+                    joints=result.joints,
                     params=extract_params(self.doc.source),
                     stdout=result.stdout,
                 ).model_dump(),

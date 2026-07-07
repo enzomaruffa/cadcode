@@ -303,7 +303,15 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
         LAST_SHOWN[leaf_id] = obj
         LAST_MATERIAL[leaf_id] = mat
 
-    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs)
+    # Assembly joint graph → physics constraints (articulated playground).
+    try:
+        from app.joints import extract_joints
+
+        joints = extract_joints(objects)
+    except Exception:  # noqa: BLE001 - joints are a bonus; never fail a render over them
+        joints = []
+
+    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs, joints=joints)
 
 
 def _clean_traceback(full: str) -> str:

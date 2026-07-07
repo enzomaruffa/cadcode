@@ -108,6 +108,7 @@ export interface GeometryPayload {
   mode?: "technical" | "printability" | "highlight" | "geomdiff" | "physical";
   print_stats?: Record<string, number | string> | null;
   physical?: PhysicalPayload | null;
+  joints?: unknown[]; // assembly joint graph (typed as RawJoint[] where consumed)
 }
 
 export type ViewMode = "technical" | "printability" | "highlight" | "physical" | "motion";

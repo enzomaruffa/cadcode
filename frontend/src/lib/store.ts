@@ -1,3 +1,4 @@
+import type { RawJoint } from "@cadcode/viewer";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { EDIT_DEBOUNCE_MS, HTTP_URL, WS_URL } from "../config";
@@ -95,6 +96,7 @@ interface StoreState {
   selection: MeasurementPayload | null;
   specs: Spec[];
   params: Param[];
+  joints: RawJoint[]; // assembly joint graph → articulated physics playground
   viewMode: ViewMode;
   buildAxis: "Z" | "X" | "Y";
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
@@ -292,6 +294,7 @@ export const useStore = create<StoreState>()(
       selection: null,
       specs: [],
       params: [],
+      joints: [],
       viewMode: "technical",
       buildAxis: "Z",
       printStats: null,
@@ -378,6 +381,7 @@ export const useStore = create<StoreState>()(
                 // don't flap on every transient error while typing.
                 specs: p.stale ? s.specs : incomingMode === "technical" ? (p.specs ?? []) : s.specs,
                 params: p.stale ? s.params : incomingMode === "technical" ? (p.params ?? []) : s.params,
+                joints: p.stale ? s.joints : ((p.joints as RawJoint[] | undefined) ?? []),
                 printStats:
                   incomingMode === "printability"
                     ? ((p.print_stats as unknown as StoreState["printStats"]) ?? null)
@@ -662,7 +666,15 @@ export const useStore = create<StoreState>()(
           return { docs, source: active ? active.source : s.source, saveState: active?.origin ? "saved" : s.saveState };
         }),
       renderShapes: (shapes, specs) =>
-        set((s) => ({ shapes, geometryRev: s.geometryRev + 1, specs, stale: false, error: null, runState: "ok" })),
+        set((s) => ({
+          shapes,
+          geometryRev: s.geometryRev + 1,
+          specs,
+          joints: [],
+          stale: false,
+          error: null,
+          runState: "ok",
+        })),
 
       setProjectPatch: (patch) => set({ projectPatch: patch }),
       rejectProjectPatch: () => set({ projectPatch: null }),

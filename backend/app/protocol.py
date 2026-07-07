@@ -119,6 +119,9 @@ class GeometryPayload(BaseModel):
     print_stats: dict[str, Any] | None = None
     # physical-properties readout (mass, com, inertia, tip, cost) for mode="physical"
     physical: dict[str, Any] | None = None
+    # assembly joint graph (build123d Joints) → physics constraints; drives the
+    # articulated playground (grab a lever, linked parts move on their real axes)
+    joints: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SimulationPayload(BaseModel):

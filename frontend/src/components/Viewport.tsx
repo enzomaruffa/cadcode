@@ -21,6 +21,7 @@ export function Viewport() {
   const activeLine = useStore((s) => s.activeLine);
   const presentation = useStore((s) => s.presentation);
   const physical = useStore((s) => s.physical);
+  const joints = useStore((s) => s.joints);
   const simFrames = useStore((s) => s.simFrames);
   const simFrame = useStore((s) => s.simFrame);
   const simPlaying = useStore((s) => s.simPlaying);
@@ -83,6 +84,7 @@ export function Viewport() {
         activeLine={activeLine}
         physical={physical}
         physics={physics}
+        joints={joints}
         onPick={onPick}
       />
       <div className="vp-toolbar">

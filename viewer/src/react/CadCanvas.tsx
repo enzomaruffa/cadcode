@@ -4,6 +4,7 @@ import { TECHNICAL, PRESENTATION } from "../materials/materials";
 import type { SectionAxis } from "../interaction/Section";
 import type { PhysicalData } from "../interaction/PhysicalOverlay";
 import type { NotifyChange, PickEvent, RenderPreset, TessShapes, ViewerOptions } from "../core/types";
+import type { RawJoint } from "../physics/protocol";
 
 export type RenderProfile = "technical" | "presentation";
 export type ViewMode = "technical" | "printability" | "highlight" | "geomdiff" | "physical" | "motion";
@@ -22,6 +23,7 @@ export interface CadCanvasProps {
   highlight?: { faceLines?: number[] } | null;
   physical?: PhysicalData | null;
   physics?: boolean; // interactive gravity/drag playground
+  joints?: RawJoint[]; // assembly joint graph → articulated physics constraints
   mode?: "select" | "section" | "measure";
   selectTopo?: "any" | "face" | "edge" | "vertex";
   interactive?: boolean;
@@ -135,8 +137,10 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
   useEffect(() => {
     const v = viewerRef.current;
     if (!v) return;
-    if (props.physics) v.startPhysics();
-    else v.stopPhysics();
+    if (props.physics) {
+      v.setJoints(props.joints ?? []); // articulate from the current joint graph
+      v.startPhysics();
+    } else v.stopPhysics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.physics, props.geometryRev]);
 

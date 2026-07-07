@@ -3,7 +3,7 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import RapierWorker from "./rapierWorker.ts?worker";
 import type { SceneGraph } from "../core/SceneGraph";
 import type { LeafObject } from "../core/leaf";
-import { FLOATS_PER_BODY, type BodyInit, type InMsg, type OutMsg } from "./protocol";
+import { FLOATS_PER_BODY, type BodyInit, type InMsg, type JointInit, type OutMsg, type RawJoint } from "./protocol";
 
 // Main-thread half of the physics playground. Extracts a collider + mass per
 // shown leaf, hands them to the Rapier solver Web Worker, and applies the
@@ -39,7 +39,7 @@ export class PhysicsClient {
     this.onUp = this.onUp.bind(this);
   }
 
-  start(sg: SceneGraph): void {
+  start(sg: SceneGraph, joints: RawJoint[] = []): void {
     this.stop();
     const size = new THREE.Vector3();
     sg.bbox.getSize(size);
@@ -65,6 +65,7 @@ export class PhysicsClient {
     this.post({
       type: "init",
       bodies,
+      joints: this.resolveJoints(joints, tracked),
       gravity: [0, 0, -diag * 6],
       groundZ: sg.bbox.min.z,
       extent: diag * 4,
@@ -72,6 +73,35 @@ export class PhysicsClient {
     });
     this.active = true;
     this.dom.addEventListener("pointerdown", this.onDown);
+  }
+
+  /** Resolve backend joints (part names + local axes) to worker joints (body
+   *  indices + the DOF axis expressed in body A's local frame, so a hinge spins
+   *  about its true world axis regardless of how the two parts are oriented). */
+  private resolveJoints(joints: RawJoint[], tracked: Tracked[]): JointInit[] {
+    const idx = (name: string) => tracked.findIndex((t) => t.leaf.group.name.split("|").pop() === name);
+    const out: JointInit[] = [];
+    const worldAxis = new THREE.Vector3();
+    const invA = new THREE.Quaternion();
+    for (const j of joints) {
+      const a = idx(j.a);
+      const b = idx(j.b);
+      if (a < 0 || b < 0) continue;
+      // hinge/slide axis: B-local → world → A-local
+      worldAxis.set(j.axisB[0], j.axisB[1], j.axisB[2]).applyQuaternion(tracked[b].leaf.group.quaternion).normalize();
+      invA.copy(tracked[a].leaf.group.quaternion).invert();
+      worldAxis.applyQuaternion(invA);
+      out.push({
+        kind: j.kind,
+        a,
+        b,
+        anchorA: j.anchorA,
+        anchorB: j.anchorB,
+        axis: [worldAxis.x, worldAxis.y, worldAxis.z],
+        range: j.range,
+      });
+    }
+    return out;
   }
 
   private post(m: InMsg): void {

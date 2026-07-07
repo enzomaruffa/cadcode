@@ -18,6 +18,7 @@ import { Section, type SectionAxis } from "../interaction/Section";
 import { Measure } from "../interaction/Measure";
 import { PhysicalOverlay, type PhysicalData } from "../interaction/PhysicalOverlay";
 import { PhysicsClient } from "../physics/PhysicsClient";
+import type { RawJoint } from "../physics/protocol";
 
 export type InteractionMode = "select" | "measure";
 
@@ -49,6 +50,7 @@ export class CadViewer {
   private grid: Grid;
   private gizmo: Gizmo;
   private physics: PhysicsClient;
+  private joints: RawJoint[] = []; // assembly joint graph for the articulated sim
   private mode: InteractionMode = "select";
 
   private framedOnce = false;
@@ -369,7 +371,13 @@ export class CadViewer {
     this.setPicking(false); // the physics grab owns the pointer while playing
     // The solver runs in a Web Worker and streams transforms back; it drives the
     // render itself (via the requestRender callback) — no main-thread step loop.
-    this.physics.start(this.sceneGraph);
+    this.physics.start(this.sceneGraph, this.joints);
+  }
+
+  /** Assembly joint graph for the next physics run (revolute/prismatic/… →
+   *  articulated constraints). Set from the geometry payload before play. */
+  setJoints(joints: RawJoint[]): void {
+    this.joints = joints;
   }
 
   stopPhysics(): void {
