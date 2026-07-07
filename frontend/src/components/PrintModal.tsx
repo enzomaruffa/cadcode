@@ -39,10 +39,11 @@ interface Plan {
   slicer_name?: string; // which engine: "orca" | "prusa" | "none"
 }
 
-// A finished slice: exact time + filament + whether the slicer actually laid support.
+// A finished slice: exact time + filament (+ weight) + whether support was laid.
 interface SliceResult {
   minutes: number;
   filament_cm3?: number;
+  filament_g?: number;
   supported?: boolean;
   slicer?: string; // engine that produced this number ("orca" | "prusa")
 }
@@ -82,6 +83,15 @@ interface Row {
 
 const LS_PRINTER = "cadcode.print.printer";
 const LS_FILAMENT = "cadcode.print.filament";
+const LS_COST = "cadcode.print.costPerKg";
+
+// Layer-height presets (mm): quality ↔ speed.
+const LAYERS: { v: number; label: string }[] = [
+  { v: 0.12, label: "0.12 fine" },
+  { v: 0.16, label: "0.16" },
+  { v: 0.2, label: "0.20 standard" },
+  { v: 0.28, label: "0.28 draft" },
+];
 
 type Strategy = "material" | "plates" | "fastest";
 
@@ -119,6 +129,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [printer, setPrinter] = useState<string>(() => localStorage.getItem(LS_PRINTER) ?? "");
   const [filaments, setFilaments] = useState<Filament[]>([]);
   const [filament, setFilament] = useState<string>(() => localStorage.getItem(LS_FILAMENT) ?? "");
+  const [filamentQ, setFilamentQ] = useState(""); // search across all brands
+  // Quality + support + adhesion, relayed to the slicer.
+  const [layerH, setLayerH] = useState(0.2);
+  const [infill, setInfill] = useState(15);
+  const [supportStyle, setSupportStyle] = useState<"normal" | "tree">("normal");
+  const [adhesion, setAdhesion] = useState<"none" | "brim" | "raft">("none");
+  const [costPerKg, setCostPerKg] = useState<number>(() => Number(localStorage.getItem(LS_COST)) || 25);
   const curPrinter = useMemo(() => printers.find((p) => p.name === printer), [printers, printer]);
   const vendors = useMemo(() => [...new Set(printers.map((p) => p.vendor))].sort(), [printers]);
   const models = useMemo(
@@ -165,6 +182,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Changing any slicer setting makes the current exact numbers stale — drop them
+  // (and any in-flight background slice) so the estimate shows until a re-plan.
+  const dropSlices = () => {
+    planToken.current++;
+    setExact({});
+  };
+
   // Select a printer + prefill its bed (still tweakable below). Kept out of an
   // effect so the bed only snaps to the printer on an explicit pick, and lint's
   // set-state-in-effect rule stays happy.
@@ -175,6 +199,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       setBedW(Math.round(p.bed_w));
       setBedD(Math.round(p.bed_d));
     }
+    dropSlices();
   };
 
   // Load the printer catalog once (empty when Orca isn't the slicer). Pick the
@@ -194,27 +219,39 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     return () => {
       alive = false;
     };
+    // mount-only: catalog is fetched once; pickPrinter is stable enough here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filaments are scoped to the chosen printer (generics + printer-compatible) —
-  // the full catalog is ~6k. Refetch on printer change; keep the saved filament.
+  // Filaments are scoped to the chosen printer (generics + printer-compatible);
+  // a search query widens it to ALL brands (compat is forced at slice time). The
+  // full catalog is ~6k so we always scope or search. Debounced on the query.
   useEffect(() => {
     if (!printer) return;
     let alive = true;
-    fetch(`${HTTP_URL}/print/filaments?printer=${encodeURIComponent(printer)}`)
-      .then((r) => r.json())
-      .then((d: { filaments?: Filament[]; default?: string | null }) => {
-        if (!alive || !d.filaments) return;
-        setFilaments(d.filaments);
-        setFilament((cur) =>
-          cur && d.filaments!.some((f) => f.name === cur) ? cur : (d.default ?? d.filaments![0]?.name ?? ""),
-        );
-      })
-      .catch(() => void 0);
+    const run = () => {
+      const q = filamentQ.trim();
+      fetch(`${HTTP_URL}/print/filaments?printer=${encodeURIComponent(printer)}&q=${encodeURIComponent(q)}`)
+        .then((r) => r.json())
+        .then((d: { filaments?: Filament[]; default?: string | null }) => {
+          if (!alive || !d.filaments) return;
+          setFilaments(d.filaments);
+          setFilament((cur) =>
+            cur && d.filaments!.some((f) => f.name === cur) ? cur : (d.default ?? d.filaments![0]?.name ?? ""),
+          );
+        })
+        .catch(() => void 0);
+    };
+    const t = setTimeout(run, filamentQ ? 300 : 0);
     return () => {
       alive = false;
+      clearTimeout(t);
     };
-  }, [printer]);
+  }, [printer, filamentQ]);
+
+  useEffect(() => {
+    if (costPerKg > 0) localStorage.setItem(LS_COST, String(costPerKg));
+  }, [costPerKg]);
 
   useEffect(() => {
     if (printer) localStorage.setItem(LS_PRINTER, printer);
@@ -231,13 +268,24 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const bump = (key: string, delta: number) =>
     setQty((q) => ({ ...q, [key]: Math.max(0, Math.min(99, (q[key] ?? 0) + delta)) }));
 
-  // Changing supports makes the current slicer numbers stale — drop them (and any
-  // in-flight background slice) so the estimate shows until the user re-plans.
+  // The full slicer request body (parts + bed + printer/filament + quality).
+  const sliceBody = () => ({
+    items,
+    bed: { w: bedW, d: bedD },
+    strategy,
+    supports,
+    printer,
+    filament,
+    layer_height: layerH,
+    infill,
+    support_style: supportStyle,
+    adhesion,
+  });
+
   const changeSupports = (on: boolean) => {
     if (on === supports) return;
     setSupports(on);
-    planToken.current++;
-    setExact({});
+    dropSlices();
   };
 
   const doPlan = async () => {
@@ -248,7 +296,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports }),
+        body: JSON.stringify(sliceBody()),
       });
       const d: Plan = await r.json();
       if (d.ok && d.shapes) {
@@ -282,12 +330,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const r = await fetch(`${HTTP_URL}/print/slice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, printer, filament, plate }),
+        body: JSON.stringify({ ...sliceBody(), plate }),
       });
       const d: {
         ok?: boolean;
         minutes?: number;
         filament_cm3?: number;
+        filament_g?: number;
         supported?: boolean;
         slicer?: string;
         error?: string;
@@ -296,7 +345,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       if (d.ok && d.minutes != null) {
         setExact((e) => ({
           ...e,
-          [key]: { minutes: d.minutes!, filament_cm3: d.filament_cm3, supported: d.supported, slicer: d.slicer },
+          [key]: {
+            minutes: d.minutes!,
+            filament_cm3: d.filament_cm3,
+            filament_g: d.filament_g,
+            supported: d.supported,
+            slicer: d.slicer,
+          },
         }));
         if (supports) refreshCal(); // supported slices teach the estimator
       } else {
@@ -333,14 +388,16 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const download = async (fmt: "stl" | "3mf", plate?: number) => {
+  // Download a file from a print endpoint (export → STL/3MF; gcode → sliced,
+  // ready-to-print G-code). `busyKey` shows a spinner on the invoking button.
+  const downloadFrom = async (endpoint: string, ext: string, plate: number | undefined, body: object) => {
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch(`${HTTP_URL}/print/export`, {
+      const r = await fetch(`${HTTP_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, bed: { w: bedW, d: bedD }, strategy, supports, format: fmt, plate }),
+        body: JSON.stringify({ ...sliceBody(), ...body, plate }),
       });
       if (!r.ok) {
         setError(await r.text());
@@ -350,7 +407,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = plate !== undefined ? `plate${plate + 1}.${fmt}` : `plate.${fmt}`;
+      a.download = plate !== undefined ? `plate${plate + 1}.${ext}` : `plate.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -359,10 +416,38 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       setBusy(false);
     }
   };
+  const download = (fmt: "stl" | "3mf", plate?: number) => downloadFrom("/print/export", fmt, plate, { format: fmt });
+  const downloadGcode = (plate?: number) => downloadFrom("/print/gcode", "gcode", plate, {});
+
+  // Upload a custom OrcaSlicer preset (exported JSON) so it joins the pickers.
+  const uploadProfile = async (file: File, kind: "filament" | "machine" | "process") => {
+    setError(null);
+    try {
+      const profile = JSON.parse(await file.text());
+      const r = await fetch(`${HTTP_URL}/print/profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, profile }),
+      });
+      const d: { ok?: boolean; name?: string; error?: string } = await r.json();
+      if (d.ok && d.name) {
+        if (kind === "filament") {
+          setFilamentQ(d.name); // surface it in the list
+          setFilament(d.name);
+        }
+      } else {
+        setError(d.error ?? "upload failed");
+      }
+    } catch (e) {
+      setError(`bad profile JSON: ${e}`);
+    }
+  };
+
+  const fmtCost = (g: number | undefined) => (g && costPerKg > 0 ? ` · $${((g / 1000) * costPerKg).toFixed(2)}` : "");
 
   // Time + filament for a plate: "slicing…" while working, then the exact slicer
-  // number (with filament, and a note when support was actually laid), else the
-  // instant "~estimate" with an on-demand "exact?" button.
+  // number (with filament weight + cost + support note), else the instant
+  // "~estimate" with an on-demand "exact?" button.
   const renderTime = (key: number, estMin: number) => {
     const res = exact[key];
     if (res === "working") return <>slicing…</>;
@@ -371,6 +456,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         <>
           {fmtMin(res.minutes)} ({res.slicer ?? plan?.slicer_name ?? "slicer"})
           {res.filament_cm3 ? ` · ${fmtCm3(res.filament_cm3)}` : ""}
+          {res.filament_g ? ` · ${res.filament_g.toFixed(1)} g` : ""}
+          {fmtCost(res.filament_g)}
           {res.supported ? " · incl. support" : ""}
         </>
       );
@@ -382,7 +469,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
           <button
             className="print-exact"
             onClick={() => sliceExact(key < 0 ? undefined : key)}
-            title="Run PrusaSlicer for the exact time"
+            title="Run the real slicer for the exact time"
           >
             exact?
           </button>
@@ -444,7 +531,10 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 <select
                   className="print-select grow"
                   value={filament}
-                  onChange={(e) => setFilament(e.target.value)}
+                  onChange={(e) => {
+                    setFilament(e.target.value);
+                    dropSlices();
+                  }}
                   title="Filament preset (tweak temps in your slicer if needed)"
                 >
                   {filamentVendors.map((v) => (
@@ -459,6 +549,28 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                     </optgroup>
                   ))}
                 </select>
+              </div>
+              <div className="print-picker">
+                <span />
+                <input
+                  className="print-select grow"
+                  placeholder="search any brand (e.g. soleyin, sunlu)…"
+                  value={filamentQ}
+                  onChange={(e) => setFilamentQ(e.target.value)}
+                />
+                <label className="print-upload" title="Upload a filament profile you exported from OrcaSlicer">
+                  ＋ custom
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadProfile(f, "filament");
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
             </>
           )}
@@ -511,7 +623,95 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             >
               no supports
             </button>
+            {supports && (
+              <>
+                <button
+                  className={supportStyle === "normal" ? "on" : ""}
+                  onClick={() => {
+                    setSupportStyle("normal");
+                    dropSlices();
+                  }}
+                  title="Normal (grid) supports"
+                >
+                  normal
+                </button>
+                <button
+                  className={supportStyle === "tree" ? "on" : ""}
+                  onClick={() => {
+                    setSupportStyle("tree");
+                    dropSlices();
+                  }}
+                  title="Tree supports — often faster & easier to remove"
+                >
+                  tree
+                </button>
+              </>
+            )}
           </div>
+
+          <div className="print-picker">
+            <span>quality</span>
+            <select
+              className="print-select"
+              value={layerH}
+              onChange={(e) => {
+                setLayerH(parseFloat(e.target.value));
+                dropSlices();
+              }}
+              title="Layer height — thinner = finer & slower"
+            >
+              {LAYERS.map((l) => (
+                <option key={l.v} value={l.v}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+            <span>infill</span>
+            <select
+              className="print-select"
+              value={infill}
+              onChange={(e) => {
+                setInfill(parseInt(e.target.value, 10));
+                dropSlices();
+              }}
+              title="Infill density"
+            >
+              {[0, 10, 15, 20, 30, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n}%
+                </option>
+              ))}
+            </select>
+            <select
+              className="print-select"
+              value={adhesion}
+              onChange={(e) => {
+                setAdhesion(e.target.value as "none" | "brim" | "raft");
+                dropSlices();
+              }}
+              title="Bed adhesion helper"
+            >
+              <option value="none">no brim</option>
+              <option value="brim">brim</option>
+              <option value="raft">raft</option>
+            </select>
+          </div>
+
+          {plan?.slicer && (
+            <div className="print-picker">
+              <span>cost</span>
+              <input
+                className="print-select"
+                type="number"
+                min={0}
+                step={1}
+                value={costPerKg}
+                onChange={(e) => setCostPerKg(parseFloat(e.target.value) || 0)}
+                title="Filament price per kg — turns grams into a per-plate cost"
+              />
+              <span>$/kg</span>
+            </div>
+          )}
 
           <div className="print-list">
             {rows.length === 0 && (
@@ -576,6 +776,16 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                       )}
                     </span>
                     <span>
+                      {plan.slicer && (
+                        <button
+                          className="btn"
+                          onClick={() => downloadGcode(p.index)}
+                          disabled={busy}
+                          title="Sliced, ready-to-print G-code"
+                        >
+                          ⬇ G-code
+                        </button>
+                      )}
                       <button className="btn" onClick={() => download("stl", p.index)} disabled={busy}>
                         ⬇ STL
                       </button>
@@ -597,6 +807,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                   const allDone = done.length === results.length && results.length > 0;
                   const slicerTotal = allDone ? done.reduce((a, r) => a + r.minutes, 0) : null;
                   const filTotal = allDone ? done.reduce((a, r) => a + (r.filament_cm3 ?? 0), 0) : 0;
+                  const gTotal = allDone ? done.reduce((a, r) => a + (r.filament_g ?? 0), 0) : 0;
                   return (
                     <div className="print-total">
                       <b>all {plan.plates?.length} plates</b>
@@ -605,6 +816,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                         <>
                           {fmtMin(slicerTotal)} ({plan.slicer_name ?? "slicer"})
                           {filTotal > 0 ? ` · ${fmtCm3(filTotal)}` : ""}
+                          {gTotal > 0 ? ` · ${gTotal.toFixed(0)} g` : ""}
+                          {fmtCost(gTotal)}
                         </>
                       ) : (
                         <>
@@ -624,6 +837,16 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             </button>
             {plan?.ok && (plan.plates?.length ?? 1) === 1 && (
               <>
+                {plan.slicer && (
+                  <button
+                    className="btn btn-gcode"
+                    onClick={() => downloadGcode()}
+                    disabled={busy}
+                    title="Sliced, ready-to-print G-code"
+                  >
+                    ⬇ G-code
+                  </button>
+                )}
                 <button className="btn" onClick={() => download("stl")} disabled={busy}>
                   ⬇ STL
                 </button>

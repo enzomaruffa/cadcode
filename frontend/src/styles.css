@@ -2424,6 +2424,23 @@ textarea {
   outline: none;
   border-color: var(--accent);
 }
+.print-upload {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.print-upload:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.btn.btn-gcode {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
 .print-plate-dl {
   display: flex;
   align-items: center;

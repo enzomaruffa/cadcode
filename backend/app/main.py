@@ -477,11 +477,17 @@ def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str, bo
     return items, bed, strategy, supports
 
 
-def _printer_args(payload: dict) -> tuple[str | None, str | None]:
-    """OrcaSlicer printer + filament preset names (None → generic defaults)."""
-    printer = payload.get("printer")
-    filament = payload.get("filament")
-    return (str(printer) if printer else None, str(filament) if filament else None)
+def _slice_settings(payload: dict) -> dict:
+    """The print settings relayed to the slicer (see slicer._norm_settings)."""
+    return {
+        "supports": payload.get("supports", True),
+        "printer": payload.get("printer") or None,
+        "filament": payload.get("filament") or None,
+        "layer_height": payload.get("layer_height"),
+        "infill": payload.get("infill"),
+        "support_style": payload.get("support_style"),
+        "adhesion": payload.get("adhesion"),
+    }
 
 
 @app.get("/print/printers")
@@ -496,14 +502,30 @@ async def print_printers() -> dict:
 
 
 @app.get("/print/filaments")
-async def print_filaments(printer: str = "") -> dict:
+async def print_filaments(printer: str = "", q: str = "") -> dict:
     """Filaments for the picker: generics + those compatible with the chosen
-    printer (the full catalog is ~6k, so we scope it). Empty w/o Orca."""
+    printer (the full catalog is ~6k, so we scope it). `q` searches ALL brands
+    (compat is forced at slice time). Empty w/o Orca."""
     import asyncio
 
     from app.kernel.slicer import orca_catalog_filaments
 
-    return await asyncio.to_thread(orca_catalog_filaments, printer or None)
+    return await asyncio.to_thread(orca_catalog_filaments, printer or None, q or None)
+
+
+@app.post("/print/profile")
+async def print_profile(payload: dict) -> dict:
+    """Upload a custom OrcaSlicer preset (exported from the GUI) so it appears in
+    the pickers: {kind: filament|machine|process, profile: {...}}."""
+    import asyncio
+
+    from app.kernel.slicer import orca_save_profile
+
+    kind = str(payload.get("kind") or "filament")
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        return {"ok": False, "error": "expected a 'profile' JSON object"}
+    return await asyncio.to_thread(orca_save_profile, kind, profile)
 
 
 @app.get("/print/parts")
@@ -548,9 +570,9 @@ async def print_slice(payload: dict) -> dict:
     from app.printplan import plan_print
 
     if not slicer_available():
-        return {"ok": False, "error": "prusa-slicer isn't installed on this server"}
+        return {"ok": False, "error": "no slicer is installed on this server"}
     items, bed, strategy, supports = _print_args(payload)
-    printer, filament = _printer_args(payload)
+    settings = _slice_settings(payload)
     plate_no = payload.get("plate")
 
     def _go() -> dict:
@@ -561,7 +583,7 @@ async def print_slice(payload: dict) -> dict:
         if plate_no is not None:
             plate_of = plan.get("_plate_of") or []
             objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
-        result = slice_minutes(objs, bed, supports=supports, printer=printer, filament=filament)
+        result = slice_minutes(objs, bed, settings=settings)
         if result is None:
             return {"ok": False, "error": "slicing failed"}
         # Teach the instant estimator: pair this plate's features with the
@@ -580,6 +602,41 @@ async def print_slice(payload: dict) -> dict:
         return {"ok": True, "plate": plate_no, **result}
 
     return await asyncio.to_thread(_go)
+
+
+@app.post("/print/gcode")
+async def print_gcode(payload: dict) -> Response:
+    """Slice the plate (with the chosen printer/filament/quality) and return the
+    ready-to-print G-code file. Slower — runs the real slicer."""
+    import asyncio
+
+    from app.kernel.slicer import slice_gcode, slicer_available
+    from app.printplan import plan_print
+
+    if not slicer_available():
+        return Response(content="no slicer installed", status_code=400)
+    items, bed, strategy, supports = _print_args(payload)
+    settings = _slice_settings(payload)
+    plate_no = payload.get("plate")
+
+    def _go() -> tuple[bytes | None, str]:
+        plan = plan_print(items, bed, want_objects=True, strategy=strategy, supports=supports)
+        if not plan.get("ok"):
+            return None, str(plan.get("error") or "plan failed")
+        objs = plan.get("_objects") or []
+        if plate_no is not None:
+            plate_of = plan.get("_plate_of") or []
+            objs = [o for o, p in zip(objs, plate_of, strict=False) if p == int(plate_no)]
+        data = slice_gcode(objs, bed, settings=settings)
+        return (data, "" if data else "slicing failed")
+
+    data, err = await asyncio.to_thread(_go)
+    if data is None:
+        return Response(content=err, status_code=400)
+    name = f"plate{int(plate_no) + 1}.gcode" if plate_no is not None else "plate.gcode"
+    return Response(
+        content=data, media_type="text/plain", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+    )
 
 
 @app.post("/print/export")

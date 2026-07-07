@@ -30,6 +30,9 @@ from typing import Any
 #   ; filament used [cm3] = 13.92
 _PRUSA_TIME_RE = re.compile(r";\s*estimated printing time.*=\s*(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?")
 _PRUSA_FIL_RE = re.compile(r";\s*filament used \[cm3\]\s*=\s*([\d.]+)")
+# grams (both slicers emit this; Prusa needs filament_density set or it's 0)
+_GRAMS_RE = re.compile(r";\s*(?:total\s+)?filament used \[g\]\s*[:=]\s*([\d.]+)", re.IGNORECASE)
+_PLA_DENSITY = 1.24  # g/cm³ fallback when the slicer reports 0 g
 
 # --- OrcaSlicer G-code comments (filled/confirmed against a real slice) ---
 #   ; total estimated time: 1h 5m 12s   (also "model printing time: ...")
@@ -105,20 +108,63 @@ def _parse_time(text: str, time_re: re.Pattern[str]) -> float | None:
     return days * 1440 + hours * 60 + mins + secs / 60.0
 
 
+def _norm_settings(s: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize/clamp print settings from the client into a safe dict."""
+    s = s or {}
+
+    def num(v: Any, d: float) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+
+    style = str(s.get("support_style") or "normal").lower()
+    adh = str(s.get("adhesion") or "none").lower()
+    return {
+        "supports": bool(s.get("supports", True)),
+        "printer": s.get("printer") or None,
+        "filament": s.get("filament") or None,
+        "layer_height": min(max(num(s.get("layer_height"), 0.2), 0.06), 0.4),
+        "infill": int(min(max(num(s.get("infill"), 15), 0), 100)),
+        "support_style": style if style in ("normal", "tree") else "normal",
+        "adhesion": adh if adh in ("none", "brim", "raft") else "none",
+    }
+
+
 def slice_minutes(
     objs: list[Any],
     bed: tuple[float, float] = (220.0, 220.0),
     timeout_s: int = 180,
-    supports: bool = True,
-    printer: str | None = None,
-    filament: str | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Slice the given solids as ONE plate; returns {minutes, filament_cm3,
-    supported, slicer, printer?, filament?} or None (no slicer / slicing failed).
-    `supports=True` auto-adds support material where overhangs need it; `False`
-    prints supportless. `printer`/`filament` are OrcaSlicer preset names (ignored
-    by the Prusa fallback). Tries the preferred backend first, falling back to the
-    other if it fails (unless CAD_SLICER pins one)."""
+    filament_g, supported, slicer, printer?, filament?} or None. `settings` carries
+    supports/printer/filament/layer_height/infill/support_style/adhesion (see
+    _norm_settings). Tries the preferred backend first, falling back to the other
+    if it fails (unless CAD_SLICER pins one)."""
+    res = _slice_any(objs, bed, timeout_s, _norm_settings(settings), want_gcode=False)
+    if res is not None:
+        res.pop("_gcode", None)  # don't ship the whole G-code in the JSON response
+    return res
+
+
+def slice_gcode(
+    objs: list[Any],
+    bed: tuple[float, float] = (220.0, 220.0),
+    timeout_s: int = 180,
+    settings: dict[str, Any] | None = None,
+) -> bytes | None:
+    """Slice and return the raw G-code bytes (ready to print), or None."""
+    res = _slice_any(objs, bed, timeout_s, _norm_settings(settings), want_gcode=True)
+    if not res:
+        return None
+    g = res.get("_gcode")
+    return g.encode() if isinstance(g, str) else g
+
+
+def _slice_any(
+    objs: list[Any], bed: tuple[float, float], timeout_s: int, st: dict[str, Any], want_gcode: bool
+) -> dict[str, Any] | None:
     order = _backend_order()
     if not objs or not order:
         return None
@@ -129,31 +175,39 @@ def slice_minutes(
         with tempfile.TemporaryDirectory(prefix="cadslice_") as d:
             stl = Path(d) / "plate.stl"
             export_stl(obj, str(stl))
-            if backend == "orca":
-                res = _slice_orca(stl, Path(d), bed, supports, timeout_s, printer, filament)
-            else:
-                res = _slice_prusa(stl, Path(d), bed, supports, timeout_s)
+            fn = _slice_orca if backend == "orca" else _slice_prusa
+            res = fn(stl, Path(d), bed, timeout_s, st, want_gcode)
         if res is not None:
             return res
     return None
 
 
+def _grams(text: str, cm3: float) -> float:
+    """Filament weight (g) from the G-code, or estimated from volume × PLA density."""
+    gm = _GRAMS_RE.search(text)
+    g = float(gm.group(1)) if gm else 0.0
+    return round(g if g > 0 else cm3 * _PLA_DENSITY, 2)
+
+
 def _slice_prusa(
-    stl: Path, workdir: Path, bed: tuple[float, float], supports: bool, timeout_s: int
+    stl: Path, workdir: Path, bed: tuple[float, float], timeout_s: int, st: dict[str, Any], want_gcode: bool
 ) -> dict[str, Any] | None:
     gcode = workdir / "plate.gcode"
     bed_shape = f"0x0,{bed[0]:g}x0,{bed[0]:g}x{bed[1]:g},0x{bed[1]:g}"
+    supports = st["supports"]
     cmd = [
         _prusa_bin() or "prusa-slicer",
         "--export-gcode",
         "--layer-height",
-        "0.2",
+        f"{st['layer_height']:g}",
         "--fill-density",
-        "15%",
+        f"{st['infill']}%",
         "--nozzle-diameter",
         "0.4",
         "--filament-diameter",
         "1.75",
+        "--filament-density",
+        f"{_PLA_DENSITY}",  # so grams get reported
         "--bed-shape",
         bed_shape,
         "--output",
@@ -161,7 +215,13 @@ def _slice_prusa(
         str(stl),
     ]
     if supports:
-        cmd.insert(-3, "--support-material")  # auto support only where overhangs need it
+        cmd += ["--support-material"]  # auto support only where overhangs need it
+        if st["support_style"] == "tree":
+            cmd += ["--support-material-style", "organic"]
+    if st["adhesion"] == "brim":
+        cmd += ["--brim-width", "5"]
+    elif st["adhesion"] == "raft":
+        cmd += ["--raft-layers", "3"]
     try:
         subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=True)
         text = gcode.read_text(errors="ignore")
@@ -171,10 +231,13 @@ def _slice_prusa(
     if minutes is None:
         return None
     fm = _PRUSA_FIL_RE.search(text)
+    cm3 = round(float(fm.group(1)), 2) if fm else 0.0
     supported = supports and ("; support_material = 1" in text or "support material" in text.lower())
     return {
         "minutes": round(minutes, 1),
-        "filament_cm3": round(float(fm.group(1)), 2) if fm else 0.0,
+        "filament_cm3": cm3,
+        "filament_g": _grams(text, cm3),
+        "_gcode": text if want_gcode else None,
         "supported": bool(supported),
         "slicer": "prusa",
     }
@@ -199,12 +262,22 @@ _ORCA_FALLBACK = {  # used when no printer is picked / a name goes missing
 }
 # name → OrcaFilamentLibrary vendor label for the generic (always-offered) filaments
 _ORCA_GENERIC_VENDOR = "OrcaFilamentLibrary"
+_ORCA_USER_VENDOR = "__user__"  # vendor tag for uploaded custom presets
 
 # lazily-built, cached-for-process-lifetime indexes over resources/profiles
 _orca_idx: dict[tuple[str, str], dict[str, Any]] | None = None
 _orca_vendor: dict[tuple[str, str], str] = {}
 _orca_flat_cache: dict[tuple[str, str], dict[str, Any]] = {}
 _orca_proc_for: dict[str, str] = {}  # machine name → best ~0.2mm process name
+
+
+def _orca_reset_cache() -> None:
+    """Drop the cached indexes so an uploaded custom preset is picked up."""
+    global _orca_idx
+    _orca_idx = None
+    _orca_vendor.clear()
+    _orca_flat_cache.clear()
+    _orca_proc_for.clear()
 
 
 def _orca_resources() -> Path | None:
@@ -239,6 +312,18 @@ def _orca_load_index() -> dict[tuple[str, str], dict[str, Any]]:
                 idx[key] = d
                 rel = str(f)[len(root) + 1 :]
                 _orca_vendor[key] = rel.split("/")[0]
+    # uploaded custom presets override/extend the bundled ones (tagged as user)
+    user = _orca_user_dir()
+    if user.is_dir():
+        for f in user.rglob("*.json"):
+            try:
+                d = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(d, dict) and "name" in d and "type" in d:
+                key = (d["type"], d["name"])
+                idx[key] = d
+                _orca_vendor[key] = _ORCA_USER_VENDOR
     _orca_idx = idx
     return idx
 
@@ -334,55 +419,88 @@ def orca_catalog_printers() -> dict[str, Any]:
     return {"printers": out, "default": default}
 
 
-def orca_catalog_filaments(printer: str | None = None) -> dict[str, Any]:
+def orca_catalog_filaments(printer: str | None = None, q: str | None = None) -> dict[str, Any]:
     """Filaments for the picker: the always-broad generics ("Generic …") plus the
     ones OrcaSlicer marks compatible with the chosen printer (same set its GUI
-    shows) — the raw catalog is ~6k, per-machine-variant, so this keeps it to a
-    usable list. {filaments:[{name, vendor, type}], default}."""
+    shows) — the raw catalog is ~6k, per-machine-variant, so this keeps it usable.
+    With `q`, also include ANY filament whose name matches (compat is forced at
+    slice time, so a cross-brand pick like a Creality-tuned PLA still works).
+    {filaments:[{name, vendor, type}], default}."""
     if "orca" not in _backend_order():
         return {"filaments": [], "default": None}
     idx = _orca_load_index()
+    ql = (q or "").strip().lower()
     out = []
     for (t, nm), d in idx.items():
         if t != "filament" or str(d.get("instantiation", "")).lower() != "true":
             continue
         v = _orca_vendor.get((t, nm), "?")
         is_generic = v == _ORCA_GENERIC_VENDOR and nm.startswith("Generic ")
+        is_custom = v == _ORCA_USER_VENDOR
+        matches_q = bool(ql) and ql in nm.lower()
         compatible = False
-        if printer and not is_generic:
+        if printer and not is_generic and not matches_q:
             cp = _orca_flatten("filament", nm).get("compatible_printers")
             compatible = isinstance(cp, list) and printer in cp
-        if not (is_generic or compatible):
+        if not (is_generic or is_custom or compatible or matches_q):
             continue
         ft = _orca_flatten("filament", nm).get("filament_type")
-        out.append({"name": nm, "vendor": ("Generic" if is_generic else v), "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
-    out.sort(key=lambda f: (f["vendor"] != "Generic", f["vendor"], f["name"]))
+        label = "Custom" if is_custom else ("Generic" if is_generic else v)
+        out.append({"name": nm, "vendor": label, "type": (ft[0] if isinstance(ft, list) and ft else ft) or "?"})
+    # Custom first, then Generic, then brands
+    rank = {"Custom": 0, "Generic": 1}
+    out.sort(key=lambda f: (rank.get(f["vendor"], 2), f["vendor"], f["name"]))
     default = _ORCA_DEFAULT["filament"] if any(f["name"] == _ORCA_DEFAULT["filament"] for f in out) else None
     if default is None and out:
         default = next((f["name"] for f in out if f["type"] == "PLA"), out[0]["name"])
     return {"filaments": out, "default": default}
 
 
+def _orca_user_dir() -> Path:
+    """Where uploaded custom Orca presets live (persisted on the workspace volume)."""
+    base = os.environ.get("CAD_WORKSPACE") or str(Path(__file__).resolve().parents[2] / ".workspace")
+    return Path(base) / "orca_user"
+
+
+def orca_save_profile(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Save an uploaded custom preset (kind: filament|machine|process). Returns
+    {ok, name} or {ok:False, error}. It joins the catalog on the next index build."""
+    import json
+    import re as _re
+
+    if kind not in ("filament", "machine", "process"):
+        return {"ok": False, "error": f"unsupported kind {kind!r}"}
+    if not isinstance(data, dict) or not data.get("name"):
+        return {"ok": False, "error": "profile JSON must be an object with a 'name'"}
+    data = {**data, "type": kind, "instantiation": "true"}
+    name = str(data["name"])
+    safe = _re.sub(r"[^\w.@ +-]", "_", name)[:120]
+    d = _orca_user_dir() / kind
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        (d / f"{safe}.json").write_text(json.dumps(data))
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    _orca_reset_cache()
+    return {"ok": True, "name": name}
+
+
 def _slice_orca(
-    stl: Path,
-    workdir: Path,
-    bed: tuple[float, float],
-    supports: bool,
-    timeout_s: int,
-    printer: str | None = None,
-    filament: str | None = None,
+    stl: Path, workdir: Path, bed: tuple[float, float], timeout_s: int, st: dict[str, Any], want_gcode: bool
 ) -> dict[str, Any] | None:
     """OrcaSlicer backend. Flattens the chosen printer + a compatible ~0.2mm
     process + the chosen filament into self-contained JSON (compat FORCED to the
-    machine name so any combo slices), overrides bed/infill/support, slices with
-    `--slice 0`, and reads `plate_1.gcode`. Runs under xvfb + software GL because
-    OrcaSlicer initializes GTK even in CLI mode. The raw G-code footer uses the
-    same `estimated printing time` / `filament used [cm3]` comments as Prusa."""
+    machine name so any combo slices), applies the requested layer/infill/support/
+    adhesion, slices with `--slice 0`, and reads `plate_1.gcode`. Runs under xvfb +
+    software GL because OrcaSlicer initializes GTK even in CLI mode. The raw G-code
+    footer uses the same `estimated printing time` / `filament used` comments as
+    PrusaSlicer."""
     import copy
     import json
 
     if _orca_resources() is None:
         return None
+    printer, filament, supports = st["printer"], st["filament"], st["supports"]
     machine_name = printer if (printer and _orca_load_index().get(("machine", printer))) else _ORCA_FALLBACK["machine"]
     process_name = _orca_process_for(machine_name)
     fil_name = filament if (filament and _orca_load_index().get(("filament", filament))) else _ORCA_FALLBACK["filament"]
@@ -403,11 +521,19 @@ def _slice_orca(
     w, d = f"{bed[0]:g}", f"{bed[1]:g}"
     machine["printable_area"] = ["0x0", f"{w}x0", f"{w}x{d}", f"0x{d}"]
     machine["printable_height"] = machine.get("printable_height", "250")
-    process["sparse_infill_density"] = "15%"
+    lh = f"{st['layer_height']:g}"
+    process["layer_height"] = lh
+    process["initial_layer_print_height"] = lh
+    process["sparse_infill_density"] = f"{st['infill']}%"
     process["enable_support"] = "1" if supports else "0"
     if supports:
-        process["support_type"] = "normal(auto)"  # auto support only where needed
+        process["support_type"] = "tree(auto)" if st["support_style"] == "tree" else "normal(auto)"
         process["support_threshold_angle"] = "45"
+    if st["adhesion"] == "brim":
+        process["brim_type"] = "outer_only"
+        process["brim_width"] = "5"
+    elif st["adhesion"] == "raft":
+        process["raft_layers"] = "3"
 
     mfile, pfile, ffile = workdir / "machine.json", workdir / "process.json", workdir / "filament.json"
     mfile.write_text(json.dumps(machine))
@@ -451,11 +577,14 @@ def _slice_orca(
     if minutes is None:
         return None
     fm = _PRUSA_FIL_RE.search(text) or _ORCA_FIL_RE.search(text)
+    cm3 = round(float(fm.group(1)), 2) if fm else 0.0
     low = text.lower()
     supported = supports and ("feature: support" in low or "type:support" in low or "support_material" in low)
     return {
         "minutes": round(minutes, 1),
-        "filament_cm3": round(float(fm.group(1)), 2) if fm else 0.0,
+        "filament_cm3": cm3,
+        "filament_g": _grams(text, cm3),
+        "_gcode": text if want_gcode else None,
         "supported": bool(supported),
         "slicer": "orca",
         "printer": machine_name,
