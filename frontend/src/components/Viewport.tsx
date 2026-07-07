@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CadCanvas, type CadCanvasHandle, type PickEvent, type SectionAxis } from "@cadcode/viewer";
+import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
 
 // The viewport is now our own renderer (@cadcode/viewer). The store contract is
@@ -31,6 +32,29 @@ export function Viewport() {
   useEffect(() => {
     if (!physics) viewerRef.current?.setExplode(explode);
   }, [explode, rev, physics]);
+
+  // Bake the current physics arrangement back into the script (Location wraps),
+  // then stop the sim — the settled/dragged poses become code (the invariant).
+  const bakePhysics = async () => {
+    const poses = viewerRef.current?.bakePhysics() ?? {};
+    const source = useStore.getState().source;
+    try {
+      const r = await fetch(`${HTTP_URL}/bake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, poses }),
+      });
+      const d: { source?: string } = await r.json();
+      if (d.source && d.source !== source) {
+        const ed = (window as { monaco?: { editor: { getEditors: () => { setValue: (v: string) => void }[] } } }).monaco;
+        ed?.editor.getEditors()[0]?.setValue(d.source);
+        useStore.getState().setSource(d.source, { immediate: true });
+      }
+    } catch {
+      /* ignore — bake is best-effort */
+    }
+    setPhysics(false);
+  };
 
   // Motion playback: advance the frame cursor ~20fps while playing.
   useEffect(() => {
@@ -172,6 +196,11 @@ export function Viewport() {
           {physics && (
             <button onClick={() => viewerRef.current?.resetPhysics()} title="Drop parts back to their code positions">
               reset
+            </button>
+          )}
+          {physics && (
+            <button onClick={bakePhysics} title="Write the current physics poses back into the code as Location(...) transforms">
+              bake → code
             </button>
           )}
         </div>

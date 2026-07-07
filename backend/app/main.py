@@ -490,6 +490,19 @@ def _slice_settings(payload: dict) -> dict:
     }
 
 
+@app.post("/bake")
+async def bake(payload: dict) -> dict:
+    """Bake physics poses back into the source: {source, poses:{name:{pos,axis,
+    angle}}} → {source} with each matching show(expr) wrapped in a Location."""
+    from app.bake import bake_source
+
+    source = str(payload.get("source") or "")
+    poses = payload.get("poses") or {}
+    if not isinstance(poses, dict):
+        return {"source": source}
+    return {"source": bake_source(source, poses)}
+
+
 @app.get("/print/printers")
 async def print_printers() -> dict:
     """Supported printers for the picker (OrcaSlicer catalog), grouped client-side

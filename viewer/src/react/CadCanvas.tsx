@@ -44,6 +44,7 @@ export interface CadCanvasHandle {
   flashLeaves: (ids: string[], hex: string) => void;
   resetPhysics: () => void;
   setExplode: (factor: number) => void;
+  bakePhysics: () => Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }>;
 }
 
 const presetFor = (p: RenderProfile | undefined): RenderPreset => (p === "presentation" ? PRESENTATION : TECHNICAL);
@@ -76,6 +77,7 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     flashLeaves: (ids, hex) => viewerRef.current?.flashLeaves(ids, hex),
     resetPhysics: () => viewerRef.current?.resetPhysics(),
     setExplode: (factor) => viewerRef.current?.setExplode(factor),
+    bakePhysics: () => viewerRef.current?.bakePhysics() ?? {},
   }));
 
   // Create the viewer once.

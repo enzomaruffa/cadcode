@@ -412,6 +412,12 @@ export class CadViewer {
     this.physics.reset();
   }
 
+  /** Per-part pose deltas (code → current sim pose) for baking back to code.
+   *  Call while physics is active; empty otherwise. */
+  bakePhysics(): Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }> {
+    return this.physics.active ? this.physics.bakePoses() : {};
+  }
+
   get physicsActive(): boolean {
     return this.physics.active;
   }

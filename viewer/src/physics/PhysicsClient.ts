@@ -129,6 +129,35 @@ export class PhysicsClient {
     this.post({ type: "reset" });
   }
 
+  /** Per-part delta from the code pose to the CURRENT (settled/dragged) pose, as
+   *  {pos, axis, angle°} keyed by show name — for baking back into the script. */
+  bakePoses(): Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }> {
+    const out: Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }> = {};
+    const initQ = new THREE.Quaternion();
+    const dq = new THREE.Quaternion();
+    const initP = new THREE.Vector3();
+    for (const t of this.tracked) {
+      const name = t.leaf.group.name.split("|").pop();
+      if (!name) continue;
+      initP.set(t.init.p[0], t.init.p[1], t.init.p[2]);
+      initQ.set(t.init.q[0], t.init.q[1], t.init.q[2], t.init.q[3]);
+      // dq = curQ · initQ⁻¹ ; dpos = curP − dq·initP  (so dq·initPose = curPose)
+      dq.copy(t.leaf.group.quaternion).multiply(initQ.invert()).normalize();
+      const dpos = t.leaf.group.position.clone().sub(initP.applyQuaternion(dq));
+      if (dq.w < 0) {
+        dq.x *= -1;
+        dq.y *= -1;
+        dq.z *= -1;
+        dq.w *= -1;
+      }
+      const s = Math.sqrt(Math.max(1 - dq.w * dq.w, 0));
+      const axis: [number, number, number] = s < 1e-6 ? [1, 0, 0] : [dq.x / s, dq.y / s, dq.z / s];
+      const angle = (2 * Math.acos(Math.min(1, dq.w)) * 180) / Math.PI;
+      out[name] = { pos: [dpos.x, dpos.y, dpos.z], axis, angle };
+    }
+    return out;
+  }
+
   stop(): void {
     this.endDrag();
     this.dom.removeEventListener("pointerdown", this.onDown);
