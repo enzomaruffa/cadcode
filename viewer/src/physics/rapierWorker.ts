@@ -78,9 +78,18 @@ async function onInit(m: InitMsg): Promise<void> {
 }
 
 function colliderFor(b: BodyInit): RAPIER.ColliderDesc | null {
-  // P0: a single convex hull per part. (Rapier JS has no built-in VHACD, so
-  // accurate concave collision — P1 — decomposes on the JS side into a compound
-  // of hulls attached to the same body; `decompose`/verts/indices are the hook.)
+  // Concave parts arrive pre-voxelized (occupied-voxel centers) — a sparse voxel
+  // collider follows the real surface (hollow bowl, perforated dish) where a
+  // convex hull would fill the cavity. Convex parts stay a smooth single hull.
+  if (b.voxels && b.voxels.length >= 3 && b.voxelSize > 0) {
+    try {
+      const vs = { x: b.voxelSize, y: b.voxelSize, z: b.voxelSize };
+      const d = RAPIER.ColliderDesc.voxels(b.voxels, vs);
+      if (d) return d;
+    } catch {
+      /* fall through to a hull */
+    }
+  }
   const hull = RAPIER.ColliderDesc.convexHull(b.points);
   if (hull) return hull;
   // Degenerate points → a ball sized to the volume, so the body still collides.

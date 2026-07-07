@@ -3,9 +3,9 @@
 // body (x,y,z, qx,qy,qz,qw) — cheap to structured-clone at 60Hz.
 
 export interface BodyInit {
-  points: Float32Array; // flat xyz convex-hull points for the collider
-  verts: Float32Array; // flat xyz full mesh verts (for convex decomposition, P1)
-  indices: Uint32Array; // triangle indices into verts (P1)
+  points: Float32Array; // flat xyz convex-hull points (convex parts)
+  voxels: Float32Array | null; // flat xyz occupied-voxel centers (concave parts) or null
+  voxelSize: number; // cubic voxel edge (when voxels != null)
   pos: [number, number, number];
   quat: [number, number, number, number];
   volume: number; // mesh volume (drives mass = volume × density)
@@ -19,7 +19,6 @@ export interface InitMsg {
   groundZ: number;
   extent: number; // ground half-extent (a big thin floor box)
   density: number; // mass per unit volume
-  decompose: boolean; // P1: convex-decompose concave parts instead of hull
 }
 
 export type InMsg =

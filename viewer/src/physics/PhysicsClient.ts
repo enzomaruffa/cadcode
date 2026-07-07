@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import RapierWorker from "./rapierWorker.ts?worker";
 import type { SceneGraph } from "../core/SceneGraph";
 import type { LeafObject } from "../core/leaf";
@@ -38,7 +39,7 @@ export class PhysicsClient {
     this.onUp = this.onUp.bind(this);
   }
 
-  start(sg: SceneGraph, decompose = false): void {
+  start(sg: SceneGraph): void {
     this.stop();
     const size = new THREE.Vector3();
     sg.bbox.getSize(size);
@@ -68,7 +69,6 @@ export class PhysicsClient {
       groundZ: sg.bbox.min.z,
       extent: diag * 4,
       density: 1e-3,
-      decompose,
     });
     this.active = true;
     this.dom.addEventListener("pointerdown", this.onDown);
@@ -181,35 +181,125 @@ export class PhysicsClient {
   }
 }
 
-/** Build the worker init for one leaf: decimated hull points, full mesh (for
- *  later decomposition), volume for mass, and the current pose. */
+const VOXEL_RES = 16; // grid cells along the longest axis for concave parts
+// mesh volume ÷ convex-hull volume below this ⇒ concave (a bowl scores low; a
+// sphere/box scores ~1, so convex parts keep their smooth, cheap hull collider).
+const CONCAVE_RATIO = 0.85;
+
+/** Build the worker init for one leaf: a convex hull for convex parts, or a
+ *  solid voxelization for concave ones (so a hollow/perforated part collides on
+ *  its real surface, not its filled hull). Plus volume for mass + current pose. */
 function bodyInitFor(geom: THREE.BufferGeometry, leaf: LeafObject): BodyInit | null {
   const pos = geom.getAttribute("position");
   if (!pos || pos.count < 4) return null;
 
-  // Decimated hull points (constant screen-space cost regardless of mesh density).
+  // Decimated hull points (constant cost regardless of mesh density).
   const step = Math.max(1, Math.floor(pos.count / MAX_HULL_PTS));
   const hull: number[] = [];
   for (let i = 0; i < pos.count; i += step) hull.push(pos.getX(i), pos.getY(i), pos.getZ(i));
 
-  // Full verts + indices for convex decomposition (P1).
-  const verts = new Float32Array(pos.array as ArrayLike<number>);
   const index = geom.getIndex();
-  const indices = index
-    ? new Uint32Array(index.array as ArrayLike<number>)
-    : Uint32Array.from({ length: pos.count }, (_, i) => i);
+  const vol = Math.max(meshVolume(pos, index), 1);
+  geom.computeBoundingBox();
+
+  // Concave (hollow / perforated) → voxelize so the collider follows the real
+  // surface; a convex hull would fill the cavity and collide wrong. Detect via
+  // mesh volume vs convex-hull volume (robust: a sphere ~1, a bowl ≪ 1).
+  let voxels: Float32Array | null = null;
+  let voxelSize = 0;
+  if (vol / hullVolume(hull, vol) < CONCAVE_RATIO) {
+    const vx = voxelizeLocal(geom);
+    if (vx && vx.centers.length >= 3) {
+      voxels = vx.centers;
+      voxelSize = vx.size;
+    }
+  }
 
   const p = leaf.group.position;
   const q = leaf.group.quaternion;
   return {
     points: new Float32Array(hull),
-    verts,
-    indices,
+    voxels,
+    voxelSize,
     pos: [p.x, p.y, p.z],
     quat: [q.x, q.y, q.z, q.w],
-    volume: Math.max(meshVolume(pos, index), 1),
+    volume: vol,
     ccd: true,
   };
+}
+
+/** Surface voxelization in geometry-local space: sample every triangle at ~voxel
+ *  spacing and mark the voxel each sample lands in. A shell of voxels is exactly
+ *  right for the hollow/perforated parts we voxelize (a ball rests on the real
+ *  surface, not a filled hull) and is robust — no raycasting. Returns occupied
+ *  voxel CENTERS (flat xyz) + the cubic voxel edge. */
+function voxelizeLocal(geom: THREE.BufferGeometry): { centers: Float32Array; size: number } | null {
+  const bb = geom.boundingBox!;
+  const sx = bb.max.x - bb.min.x;
+  const sy = bb.max.y - bb.min.y;
+  const sz = bb.max.z - bb.min.z;
+  const vs = Math.max(Math.max(sx, sy, sz) / VOXEL_RES, 1e-4);
+
+  const pos = geom.getAttribute("position");
+  const index = geom.getIndex();
+  const nTri = index ? index.count : pos.count;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  const occupied = new Set<number>();
+  const nx = Math.max(1, Math.ceil(sx / vs));
+  const ny = Math.max(1, Math.ceil(sy / vs));
+  const key = (x: number, y: number, z: number) => {
+    const i = Math.min(nx - 1, Math.max(0, Math.floor((x - bb.min.x) / vs)));
+    const j = Math.min(ny - 1, Math.max(0, Math.floor((y - bb.min.y) / vs)));
+    const k = Math.max(0, Math.floor((z - bb.min.z) / vs));
+    return (k * ny + j) * nx + i;
+  };
+  for (let t = 0; t < nTri; t += 3) {
+    const ia = index ? index.getX(t) : t;
+    const ib = index ? index.getX(t + 1) : t + 1;
+    const ic = index ? index.getX(t + 2) : t + 2;
+    a.fromBufferAttribute(pos, ia);
+    b.fromBufferAttribute(pos, ib);
+    c.fromBufferAttribute(pos, ic);
+    const steps = Math.max(1, Math.ceil(Math.max(a.distanceTo(b), a.distanceTo(c)) / vs));
+    for (let u = 0; u <= steps; u++) {
+      for (let v = 0; v <= steps - u; v++) {
+        const bu = u / steps;
+        const bv = v / steps;
+        p.set(
+          a.x + bu * (b.x - a.x) + bv * (c.x - a.x),
+          a.y + bu * (b.y - a.y) + bv * (c.y - a.y),
+          a.z + bu * (b.z - a.z) + bv * (c.z - a.z),
+        );
+        occupied.add(key(p.x, p.y, p.z));
+      }
+    }
+  }
+  const centers: number[] = [];
+  for (const cell of occupied) {
+    const i = cell % nx;
+    const j = Math.floor(cell / nx) % ny;
+    const k = Math.floor(cell / (nx * ny));
+    centers.push(bb.min.x + (i + 0.5) * vs, bb.min.y + (j + 0.5) * vs, bb.min.z + (k + 0.5) * vs);
+  }
+  return centers.length ? { centers: new Float32Array(centers), size: vs } : null;
+}
+
+/** Volume of the convex hull of flat xyz points (≥ the mesh volume it wraps). */
+function hullVolume(points: number[], fallback: number): number {
+  try {
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i + 2 < points.length; i += 3) pts.push(new THREE.Vector3(points[i], points[i + 1], points[i + 2]));
+    if (pts.length < 4) return fallback;
+    const g = new ConvexGeometry(pts);
+    const v = meshVolume(g.getAttribute("position") as THREE.BufferAttribute, null);
+    g.dispose();
+    return Math.max(v, fallback); // hull encloses the mesh → ratio stays ≤ 1
+  } catch {
+    return fallback;
+  }
 }
 
 /** Signed volume of a closed triangle mesh (Σ v0·(v1×v2)/6). */
