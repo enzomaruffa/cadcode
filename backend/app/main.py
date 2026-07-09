@@ -490,6 +490,22 @@ def _slice_settings(payload: dict) -> dict:
     }
 
 
+@app.post("/projects/{project}/rename")
+async def project_rename(project: str, payload: dict) -> dict:
+    """Rename a part/scene AND refactor every reference (imports + call sites,
+    same-project and cross-project): {kind, old, new} → {ok, new, changed}."""
+    import asyncio
+
+    from app.rename import rename_file
+
+    kind = str(payload.get("kind") or "part")
+    old = str(payload.get("old") or "")
+    new = str(payload.get("new") or "")
+    if not old or not new:
+        return {"ok": False, "error": "old and new names are required"}
+    return await asyncio.to_thread(rename_file, project, kind, old, new)
+
+
 @app.get("/docs/build123d")
 async def docs_build123d() -> dict:
     """Real build123d signatures + docstrings (introspected from the installed

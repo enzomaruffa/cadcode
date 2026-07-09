@@ -38,6 +38,8 @@ export function FilesPanel() {
   const activeProject = useStore((s) => s.activeProject);
   const openDoc = useStore((s) => s.openDoc);
   const setRunTarget = useStore((s) => s.setRunTarget);
+  const renameProjectDoc = useStore((s) => s.renameProjectDoc);
+  const syncProjectDoc = useStore((s) => s.syncProjectDoc);
   const [tree, setTree] = useState<ProjectTree | null>(null);
 
   // Only sets state in the async callback; the render guards on activeProject, so
@@ -61,6 +63,53 @@ export function FilesPanel() {
       const d: { source?: string } = await r.json();
       if (typeof d.source === "string") openDoc(label, d.source, { project: activeProject, kind, name });
       setRunTarget(activeProject, kind, name);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Rename = a real refactor: the backend rewrites every import + call site
+  // (this project AND others); we then refresh the tree, retitle/repoint the
+  // open tab, and re-sync any other open docs whose imports were rewritten.
+  const renameFile = async (kind: "part" | "scene", oldName: string) => {
+    if (!activeProject) return;
+    const raw = window.prompt(`Rename ${kind} "${oldName}" to:`, oldName);
+    if (!raw || raw.trim() === oldName) return;
+    try {
+      const r = await fetch(`${HTTP_URL}/projects/${activeProject}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, old: oldName, new: raw.trim() }),
+      });
+      const d: { ok?: boolean; new?: string; changed?: string[]; error?: string } = await r.json();
+      if (!d.ok || !d.new) {
+        window.alert(d.error ?? "rename failed");
+        return;
+      }
+      const newName = d.new;
+      await refresh();
+      const st = useStore.getState();
+      // the renamed file's own tab (fetch its rewritten source)
+      const fr = await fetch(
+        `${HTTP_URL}/projects/${activeProject}/file?kind=${kind}&name=${encodeURIComponent(newName)}`,
+      );
+      const fd: { source?: string } = await fr.json();
+      if (typeof fd.source === "string") renameProjectDoc(activeProject, kind, oldName, newName, fd.source);
+      // any other open docs whose imports were rewritten
+      for (const doc of st.docs) {
+        const o = doc.origin;
+        if (!o || !(d.changed ?? []).includes(`${o.project}/${o.kind}s/${o.name}.py`)) continue;
+        if (o.project === activeProject && o.kind === kind && o.name === oldName) continue;
+        try {
+          const rr = await fetch(
+            `${HTTP_URL}/projects/${o.project}/file?kind=${o.kind}&name=${encodeURIComponent(o.name)}`,
+          );
+          const rd: { source?: string } = await rr.json();
+          if (typeof rd.source === "string") syncProjectDoc(o.project, o.kind, o.name, rd.source);
+        } catch {
+          /* ignore */
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -109,14 +158,28 @@ export function FilesPanel() {
           project.py
         </button>
         {(tree?.parts ?? []).map((part) => (
-          <button className="files-file" key={`pt-${part}`} onClick={() => open("part", part, part)}>
-            parts/{part}.py
-          </button>
+          <div className="files-row" key={`pt-${part}`}>
+            <button className="files-file" onClick={() => open("part", part, part)}>
+              parts/{part}.py
+            </button>
+            <button
+              className="files-rename"
+              onClick={() => renameFile("part", part)}
+              title="Rename this part — every import and call site is updated (this project and others)"
+            >
+              ✎
+            </button>
+          </div>
         ))}
         {(tree?.scenes ?? []).map((scene) => (
-          <button className="files-file" key={`sc-${scene}`} onClick={() => open("scene", scene, scene)}>
-            scenes/{scene}.py
-          </button>
+          <div className="files-row" key={`sc-${scene}`}>
+            <button className="files-file" onClick={() => open("scene", scene, scene)}>
+              scenes/{scene}.py
+            </button>
+            <button className="files-rename" onClick={() => renameFile("scene", scene)} title="Rename this scene">
+              ✎
+            </button>
+          </div>
         ))}
         {tree && tree.parts.length === 0 && tree.scenes.length === 0 && (
           <div className="files-empty">No parts or scenes yet — add one with +part / +scene.</div>

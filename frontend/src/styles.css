@@ -1196,6 +1196,32 @@ textarea {
 .files-file-row .files-file {
   flex: 1 1 auto;
 }
+.files-row {
+  display: flex;
+  align-items: center;
+}
+.files-row .files-file {
+  flex: 1 1 auto;
+}
+.files-rename {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.files-row:hover .files-rename {
+  opacity: 1;
+}
+.files-rename:hover {
+  color: var(--accent);
+  background: var(--surface);
+}
 .files-run {
   flex: 0 0 auto;
   background: none;

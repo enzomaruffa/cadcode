@@ -159,6 +159,7 @@ interface StoreState {
   setRunTarget: (project: string, kind: string, name: string) => void;
   setActiveProject: (project: string | null) => void;
   syncProjectDoc: (project: string, kind: string, name: string, source: string) => void;
+  renameProjectDoc: (project: string, kind: string, oldName: string, newName: string, source: string) => void;
   renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
   setProjectPatch: (patch: {
     project: string;
@@ -664,6 +665,27 @@ export const useStore = create<StoreState>()(
           );
           const active = docs.find((d) => d.id === s.activeDocId);
           return { docs, source: active ? active.source : s.source, saveState: active?.origin ? "saved" : s.saveState };
+        }),
+      // After a rename refactor: retitle the open tab, repoint its origin, and
+      // swap in the rewritten source (the file's imports/identifier changed too).
+      renameProjectDoc: (project, kind, oldName, newName, source) =>
+        set((s) => {
+          const docs = s.docs.map((d) =>
+            d.origin && d.origin.project === project && d.origin.kind === kind && d.origin.name === oldName
+              ? { ...d, name: newName, source, origin: { ...d.origin, name: newName } }
+              : d,
+          );
+          const active = docs.find((d) => d.id === s.activeDocId);
+          const affected =
+            active?.origin?.project === project && active.origin.kind === kind && active.origin.name === newName;
+          return {
+            docs,
+            ...(affected ? { source } : {}),
+            runTarget:
+              s.runTarget && s.runTarget.kind === kind && s.runTarget.name === oldName && s.activeProject === project
+                ? { kind, name: newName }
+                : s.runTarget,
+          };
         }),
       renderShapes: (shapes, specs) =>
         set((s) => ({
