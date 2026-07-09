@@ -46,7 +46,8 @@ export function Viewport() {
       });
       const d: { source?: string } = await r.json();
       if (d.source && d.source !== source) {
-        const ed = (window as { monaco?: { editor: { getEditors: () => { setValue: (v: string) => void }[] } } }).monaco;
+        const ed = (window as { monaco?: { editor: { getEditors: () => { setValue: (v: string) => void }[] } } })
+          .monaco;
         ed?.editor.getEditors()[0]?.setValue(d.source);
         useStore.getState().setSource(d.source, { immediate: true });
       }
@@ -199,7 +200,10 @@ export function Viewport() {
             </button>
           )}
           {physics && (
-            <button onClick={bakePhysics} title="Write the current physics poses back into the code as Location(...) transforms">
+            <button
+              onClick={bakePhysics}
+              title="Write the current physics poses back into the code as Location(...) transforms"
+            >
               bake → code
             </button>
           )}

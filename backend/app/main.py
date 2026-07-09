@@ -490,6 +490,17 @@ def _slice_settings(payload: dict) -> dict:
     }
 
 
+@app.get("/completions")
+async def completions() -> dict:
+    """Everything the editor's autocomplete needs in one call: all projects
+    (parts + signatures + constants), library parts, scenes."""
+    import asyncio
+
+    from app.completions import completion_catalog
+
+    return await asyncio.to_thread(completion_catalog)
+
+
 @app.post("/bake")
 async def bake(payload: dict) -> dict:
     """Bake physics poses back into the source: {source, poses:{name:{pos,axis,
