@@ -95,6 +95,7 @@ def run_project(
     name: str = "",
     overrides: dict[str, str] | None = None,
     preview_source: str | None = None,
+    lean: bool = False,
 ) -> dict[str, Any]:
     """Run a project (kind: scene|part|project) with the project importable.
 
@@ -116,10 +117,10 @@ def run_project(
     current = _ident(project)
     tmp = Path(tempfile.mkdtemp(prefix="cadproj_"))
     with _RUN_LOCK:
-        return _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source)
+        return _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source, lean)
 
 
-def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source) -> dict[str, Any]:
+def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source, lean=False) -> dict[str, Any]:
     added_path = str(tmp)
     try:
         _materialize(tmp, overrides or {}, current)
@@ -135,6 +136,11 @@ def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_so
 
         sys.path.insert(0, added_path)
         try:
+            if lean:
+                # Agent dry-runs: exec + specs + geometry facts, no tessellation.
+                from app.kernel.runner import run_source_lean
+
+                return run_source_lean(target_source)
             result = run_source(target_source, sandbox=False)  # project imports need the real import machinery
         finally:
             if added_path in sys.path:

@@ -10,6 +10,7 @@ dependencies = [
     "build123d>=0.9",
     "ocp-tessellate>=3.0",
     "gitpython>=3.1",
+    "cairosvg>=2.9.0",
 ]
 
 [project.optional-dependencies]

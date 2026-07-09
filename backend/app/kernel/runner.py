@@ -314,6 +314,66 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs, joints=joints)
 
 
+def run_source_lean(source: str) -> dict:
+    """Execute ``source`` and return errors/specs/geometry FACTS — no tessellation.
+
+    Built for the agent's dry-run loop: verification needs "does it run, do the
+    specs pass, are the proportions sane" — not meshes. Skipping ocp-tessellate
+    cuts most of the run cost, and (unlike ``run_source``) this never touches the
+    ``LAST_SHOWN`` cache, so agent dry-runs can't clobber the live selection."""
+    ns, shown, specs = _make_namespace(None)
+    buf = io.StringIO()
+    try:
+        code = compile(source, SOURCE_FILENAME, "exec")
+        with redirect_stdout(buf), _ambient_dsl(ns):
+            exec(code, ns)
+    except BaseException as exc:  # noqa: BLE001 - report every failure to the agent
+        line = _error_line(exc)
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "error_line": line,
+            "stdout": buf.getvalue(),
+        }
+
+    objects = shown or _auto_collect(ns)
+    return {
+        "ok": True,
+        "specs": specs,
+        "stdout": buf.getvalue(),
+        "facts": _facts([(o, n) for (o, n, _c, _m) in objects]),
+    }
+
+
+def _facts(objects: list[tuple[Any, str | None]]) -> dict:
+    """Compact geometric facts the agent can sanity-check numerically: per shown
+    part its bbox size + volume, and pairwise bbox gaps/overlaps (≤ 8 parts)."""
+    parts: list[dict] = []
+    boxes: list[tuple[str, Any]] = []
+    for i, (obj, name) in enumerate(objects[:12]):
+        label = name or f"part{i + 1}"
+        try:
+            bb = obj.bounding_box()
+            size = [round(bb.max.X - bb.min.X, 2), round(bb.max.Y - bb.min.Y, 2), round(bb.max.Z - bb.min.Z, 2)]
+            vol = round(float(obj.volume), 1) if hasattr(obj, "volume") else None
+            parts.append({"name": label, "bbox_size": size, "volume": vol})
+            boxes.append((label, bb))
+        except Exception:  # noqa: BLE001 - facts are best-effort
+            parts.append({"name": label})
+    pairs: list[dict] = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, min(len(boxes), 8)):
+            (na, a), (nb, b) = boxes[i], boxes[j]
+            gaps = [
+                max(a.min.X - b.max.X, b.min.X - a.max.X, 0.0),
+                max(a.min.Y - b.max.Y, b.min.Y - a.max.Y, 0.0),
+                max(a.min.Z - b.max.Z, b.min.Z - a.max.Z, 0.0),
+            ]
+            gap = round((gaps[0] ** 2 + gaps[1] ** 2 + gaps[2] ** 2) ** 0.5, 2)
+            pairs.append({"a": na, "b": nb, "bbox_gap": gap} | ({} if gap > 0 else {"overlapping_or_touching": True}))
+    return {"parts": parts, "pairs": pairs[:15]}
+
+
 def _clean_traceback(full: str) -> str:
     """Trim the exec scaffolding frames so the user sees their own code first."""
     lines = full.splitlines()

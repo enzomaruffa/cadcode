@@ -12,6 +12,7 @@ interface AgentResult {
   edits?: FileEdit[];
   rationale?: string;
   targets?: string[];
+  note?: string; // one-line durable memory (written to project notes on accept)
   error?: string;
 }
 
@@ -127,11 +128,13 @@ export function ProjectAgentPanel() {
       let d: AgentResult | null = null;
       while (Date.now() - t0 < MAX_MS) {
         await new Promise((res) => setTimeout(res, 2500));
-        const mins = Math.floor((Date.now() - t0) / 60000);
-        setStatus(`thinking${mins > 0 ? ` (${mins}m — iterating on the geometry)` : "…"}`);
         const p = await fetch(`${HTTP_URL}/projects/${activeProject}/agent/${started.job_id}`).catch(() => null);
-        const poll = p ? await readJson<{ status?: string; result?: AgentResult }>(p) : null;
+        const poll = p ? await readJson<{ status?: string; result?: AgentResult; log?: string[] }>(p) : null;
         if (!poll) continue; // transient blip / non-JSON — keep polling
+        // Live status: the agent's own step log (dry-runs, validation, vision…).
+        const mins = Math.floor((Date.now() - t0) / 60000);
+        const last = poll.log?.length ? poll.log[poll.log.length - 1] : "thinking…";
+        setStatus(mins > 0 ? `${last} (${mins}m)` : last);
         if (poll.status === "done" || poll.status === "gone") {
           d = poll.result ?? null;
           break;
@@ -145,7 +148,13 @@ export function ProjectAgentPanel() {
         // Open every changed file (last-opened = first edit, so it's focused) and
         // stage the patch → the code editor shows each file's diff inline.
         for (let i = d.edits.length - 1; i >= 0; i--) openEdited(files, d.edits[i].path);
-        setProjectPatch({ project: activeProject, rationale: d.rationale ?? "", edits: d.edits });
+        setProjectPatch({
+          project: activeProject,
+          rationale: d.rationale ?? "",
+          edits: d.edits,
+          note: d.note ?? "",
+          request: message,
+        });
         setStatus(null);
         setPrompt("");
       } else {

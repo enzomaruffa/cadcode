@@ -411,6 +411,8 @@ async def _run_agent_job(job_id: str, project: str, payload: dict) -> None:
     from app.library import catalog
     from app.project_agent import run_project_agent
 
+    log: list[str] = _AGENT_JOBS.get(job_id, {}).setdefault("log", [])
+
     try:
         try:
             library = catalog()
@@ -423,10 +425,15 @@ async def _run_agent_job(job_id: str, project: str, payload: dict) -> None:
             str(payload.get("run_name") or ""),
             selection=payload.get("selection"),
             library=library,
+            log=lambda m: log.append(m),
         )
-        _AGENT_JOBS[job_id] = {"status": "done", "result": result}
+        _AGENT_JOBS[job_id] = {"status": "done", "result": result, "log": log}
     except Exception as exc:  # noqa: BLE001 - a job must always resolve
-        _AGENT_JOBS[job_id] = {"status": "done", "result": {"ok": False, "error": f"{type(exc).__name__}: {exc}"}}
+        _AGENT_JOBS[job_id] = {
+            "status": "done",
+            "result": {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+            "log": log,
+        }
 
 
 @app.post("/projects/{project}/agent")
@@ -455,13 +462,14 @@ async def project_agent(project: str, payload: dict) -> dict:
 
 @app.get("/projects/{project}/agent/{job_id}")
 async def project_agent_poll(project: str, job_id: str) -> dict:
-    """Poll an agent job: {status: running} or {status: done, result: {...}}."""
+    """Poll an agent job: {status, log} (+ result when done). `log` is the live
+    step-by-step status the panel shows while the agent works."""
     job = _AGENT_JOBS.get(job_id)
     if job is None:
         return {"status": "gone", "result": {"ok": False, "error": "job not found (server restarted?) — ask again"}}
     if job.get("status") == "done":
-        return {"status": "done", "result": job.get("result")}
-    return {"status": "running"}
+        return {"status": "done", "result": job.get("result"), "log": job.get("log") or []}
+    return {"status": "running", "log": job.get("log") or []}
 
 
 def _print_args(payload: dict) -> tuple[list[dict], tuple[float, float], str, bool]:
@@ -759,6 +767,12 @@ async def apply_project_patch(project: str, payload: dict) -> dict:
             edits[str(e["path"])] = str(e.get("new_source") or "")
     if not edits:
         return {"ok": False, "error": "no edits"}
+    # Accepted agent patches may carry a durable note → per-project agent memory.
+    note = str(payload.get("agent_note") or "").strip()
+    if note:
+        from app.project_agent import append_agent_memory
+
+        append_agent_memory(project, note, str(payload.get("agent_request") or ""))
     result = write_project_files(project, edits)
     if result.get("ok"):
         kernel = getattr(app.state, "kernel", None)

@@ -60,7 +60,12 @@ def iso_svg(part: Any, size: int = 140) -> str:
         shapes, _states, _bbox = tessellate([part], names=["thumb"])
     except Exception:
         return ""
+    return iso_svg_shapes(shapes, size)
 
+
+def iso_svg_shapes(shapes: dict, size: int = 140) -> str:
+    """Shaded isometric SVG from an already-tessellated shapes tree (any number
+    of parts) — used for library thumbnails AND the agent's vision sanity pass."""
     # Collect projected, depth-keyed, shaded triangles + edge segments.
     tris: list[tuple[float, list[tuple[float, float]], str]] = []
     edges: list[tuple[tuple[float, float], tuple[float, float]]] = []

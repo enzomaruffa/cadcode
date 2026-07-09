@@ -126,8 +126,14 @@ interface StoreState {
   // Auto-save status of the active PROJECT file (null for the scratch buffer).
   saveState: "saved" | "saving" | "dirty" | null;
   // A pending multi-file agent patch — shown as an inline diff in the code editor
-  // (per edited file) until accepted/rejected.
-  projectPatch: { project: string; rationale: string; edits: { path: string; new_source: string }[] } | null;
+  // (per edited file) until accepted/rejected. note/request feed agent memory.
+  projectPatch: {
+    project: string;
+    rationale: string;
+    edits: { path: string; new_source: string }[];
+    note?: string;
+    request?: string;
+  } | null;
 
   connect: () => void;
   setSource: (source: string, opts?: { immediate?: boolean }) => void;
@@ -165,6 +171,8 @@ interface StoreState {
     project: string;
     rationale: string;
     edits: { path: string; new_source: string }[];
+    note?: string;
+    request?: string;
   }) => void;
   acceptProjectPatch: () => void;
   rejectProjectPatch: () => void;
@@ -709,7 +717,12 @@ export const useStore = create<StoreState>()(
             await fetch(`${HTTP_URL}/projects/${patch.project}/apply`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ edits: patch.edits }),
+              // agent_note becomes durable per-project agent memory on accept
+              body: JSON.stringify({
+                edits: patch.edits,
+                agent_note: patch.note ?? "",
+                agent_request: patch.request ?? "",
+              }),
             });
           } catch {
             /* ignore — the write may still have landed */
