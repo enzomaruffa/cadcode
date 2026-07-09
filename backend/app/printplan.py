@@ -32,16 +32,12 @@ def _slicer_name() -> str:
     return slicer_name()
 
 
-def _orientations() -> list[tuple[str, float, float]]:
-    """The six principal orientations as (label, X°, Y°)."""
-    return [
-        ("as-is", 0, 0),
-        ("x+90", 90, 0),
-        ("x-90", -90, 0),
-        ("x180", 180, 0),
-        ("y+90", 0, 90),
-        ("y-90", 0, -90),
-    ]
+# Two-phase orientation search: phase 1 scores ~48 candidate "down" directions
+# (6 principal + a Fibonacci-sphere sweep, so 45° tilts are really tried) on
+# CHEAP metrics — removability-weighted support cost (support trapped in a bore
+# costs up to 10× open support), height, footprint. Phase 2 layer-slices only
+# the best few for a real time estimate. See print_time.support_cost.
+_PHASE2_KEEP = 6
 
 
 # What each strategy optimizes when choosing a part's orientation. Metrics per
@@ -56,43 +52,62 @@ STRATEGIES = ("material", "plates", "fastest")
 def _orient(
     obj: Any, strategy: str = "material", supports: bool = True
 ) -> tuple[Any, str, float, float, tuple[Any, Any], Any]:
-    """Pick the best orientation for the strategy — scored on the tessellated
-    mesh (rotating vertices is free; no re-tessellation per candidate). Returns
-    (rotated + bed-dropped solid, label, support area, estimated minutes, oriented
-    mesh (verts, tris), profile) — the mesh + profile let the caller aggregate a
-    correct PLATE time (shared layers) instead of summing per-part times.
+    """Pick the best orientation for the strategy. Phase 1: ~48 candidate down
+    directions scored on removability-weighted support cost (+ height/footprint)
+    — support trapped inside a bore/pocket is penalized up to 10×, so "print it
+    upside-down with external supports" wins on the shapes where a human would
+    choose that. Phase 2: layer-slice the best few for real minutes. Returns
+    (rotated + bed-dropped solid, label, support area, est minutes, oriented mesh
+    (verts, tris), profile)."""
+    import numpy as np
+    from build123d import Axis, Pos
 
-    `supports` reflects the print setting: even without support material we still
-    prefer orientations with less overhang (they print cleaner), so support area
-    keeps ranking; but the time estimate drops the support term when off."""
-    from build123d import Pos, Rot
-
-    from app.kernel.print_time import estimate_minutes, mesh_of, rotate_mesh, support_area
+    from app.kernel.print_time import (
+        build_occupancy,
+        candidate_down_dirs,
+        estimate_minutes,
+        mesh_of,
+        rotation_to_down,
+        support_area,
+        support_cost,
+    )
 
     # Supportless prints don't extrude support material — zero its density so the
-    # time estimate drops the support term (overhang area is still measured below
-    # for orientation ranking + display).
+    # time estimate drops the support term (overhang area is still measured for
+    # ranking + display: less overhang prints cleaner either way).
     prof = None if supports else {"support_density": 0.0}
     verts, tris = mesh_of(obj)
-    best: tuple[tuple[float, ...], str, float, float, float, float, Any] | None = None
-    for label, rx, ry in _orientations():
-        v = rotate_mesh(verts, rx, ry)
-        v = v - [0.0, 0.0, float(v[:, 2].min())]  # drop onto the bed
-        sup = support_area(v, tris)
-        minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
+    occ = build_occupancy(verts, tris)
+
+    # Phase 1 — cheap metrics for every candidate.
+    phase1: list[tuple[tuple[float, float, float], str, Any, Any, float, Any]] = []
+    for label, d in candidate_down_dirs():
+        r, axis, angle = rotation_to_down(d)
+        vr = verts @ r.T
+        cost = support_cost(vr, tris, occ, r)  # rotated-only (support_cost maps rays back to the grid)
+        v = vr - [0.0, 0.0, float(vr[:, 2].min())]  # dropped onto the bed for the size metrics
+        height = float(v[:, 2].max())
         footprint = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
-        m = {"s": round(sup, 1), "t": minutes, "f": round(footprint, 1)}
+        phase1.append(((round(cost, 1), round(height, 1), round(footprint, 1)), label, axis, angle, cost, v))
+    phase1.sort(key=lambda p: p[0])
+
+    # Phase 2 — real layer-sliced estimate for the survivors; strategy picks.
+    best: tuple[tuple[float, ...], str, Any, Any, float, float, Any] | None = None
+    for (_cost_key, _h, fp), label, axis, angle, cost, v in phase1[:_PHASE2_KEEP]:
+        minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
+        sup = support_area(v, tris)
         if strategy == "plates":
-            key = (m["f"], m["s"], m["t"])
+            key = (fp, cost, minutes)
         elif strategy == "fastest":
-            key = (m["t"], m["s"], m["f"])
-        else:  # material
-            key = (m["s"], m["t"], m["f"])
+            key = (minutes, cost, fp)
+        else:  # material — removability-weighted support first
+            key = (cost, minutes, fp)
         if best is None or key < best[0]:
-            best = (key, label, sup, minutes, rx, ry, v)
+            best = (key, label, axis, angle, sup, minutes, v)
     assert best is not None
-    _key, label, sup, minutes, rx, ry, best_v = best
-    oriented = Rot(X=rx, Y=ry) * obj if (rx or ry) else obj
+    _key, label, axis, angle, sup, minutes, best_v = best
+
+    oriented = obj.rotate(Axis((0, 0, 0), tuple(np.asarray(axis, dtype=float))), angle) if angle else obj
     bb = oriented.bounding_box()
     # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented

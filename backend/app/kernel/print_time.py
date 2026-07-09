@@ -111,6 +111,122 @@ def rotate_mesh(verts: np.ndarray, rx_deg: float, ry_deg: float) -> np.ndarray:
     return out
 
 
+def candidate_down_dirs(n_extra: int = 42) -> list[tuple[str, np.ndarray]]:
+    """Orientation candidates as (label, unit direction that will face the BED).
+    The 6 principal directions plus a Fibonacci-sphere sweep — so 45° tilts (a
+    self-supporting "teardrop" hole) and every in-between are actually tried."""
+    out: list[tuple[str, np.ndarray]] = [
+        ("as-is", np.array([0.0, 0.0, -1.0])),
+        ("upside-down", np.array([0.0, 0.0, 1.0])),
+        ("on side +X", np.array([1.0, 0.0, 0.0])),
+        ("on side -X", np.array([-1.0, 0.0, 0.0])),
+        ("on side +Y", np.array([0.0, 1.0, 0.0])),
+        ("on side -Y", np.array([0.0, -1.0, 0.0])),
+    ]
+    golden = math.pi * (3.0 - math.sqrt(5.0))
+    for i in range(n_extra):
+        z = 1.0 - 2.0 * (i + 0.5) / n_extra
+        r = math.sqrt(max(1.0 - z * z, 0.0))
+        th = golden * i
+        d = np.array([r * math.cos(th), r * math.sin(th), z])
+        tilt = math.degrees(math.acos(max(min(-d[2], 1.0), -1.0)))  # vs printing as-is
+        out.append((f"tilted {tilt:.0f}°", d))
+    return out
+
+
+def rotation_to_down(d: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """Rotation taking part-frame direction `d` to world -Z (the bed). Returns
+    (R 3×3, axis, angle°) — R for the mesh, axis/angle for the build123d solid."""
+    d = d / (np.linalg.norm(d) or 1.0)
+    target = np.array([0.0, 0.0, -1.0])
+    c = float(np.dot(d, target))
+    if c > 1.0 - 1e-9:
+        return np.eye(3), np.array([1.0, 0.0, 0.0]), 0.0
+    if c < -1.0 + 1e-9:  # 180° — any horizontal axis works
+        return np.diag([1.0, -1.0, -1.0]), np.array([1.0, 0.0, 0.0]), 180.0
+    axis = np.cross(d, target)
+    axis = axis / np.linalg.norm(axis)
+    angle = math.acos(max(min(c, 1.0), -1.0))
+    k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    r = np.eye(3) + math.sin(angle) * k + (1 - math.cos(angle)) * (k @ k)
+    return r, axis, math.degrees(angle)
+
+
+def build_occupancy(verts: np.ndarray, tris: np.ndarray, res: int = 40) -> dict:
+    """Coarse surface-occupancy grid in the part's ORIGINAL frame — sample every
+    triangle at ~cell spacing and mark the cells. Built once per part; the
+    removability rays are rotated into this frame per candidate (no rebuild)."""
+    lo = verts.min(axis=0)
+    hi = verts.max(axis=0)
+    span = np.maximum(hi - lo, 1e-6)
+    cell = float(span.max() / res)
+    dims = np.maximum((span / cell).astype(int) + 1, 1)
+    grid = np.zeros(dims, dtype=bool)
+
+    p0, p1, p2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+    e1 = np.linalg.norm(p1 - p0, axis=1)
+    e2 = np.linalg.norm(p2 - p0, axis=1)
+    # 1.5× oversampling so even long thin triangles (a cylinder wall spans the
+    # whole height in 2 tris) leave no gaps a ray could slip through.
+    steps = np.clip(np.ceil(1.5 * np.maximum(e1, e2) / cell).astype(int), 1, 96)
+    for i in range(len(tris)):
+        n = int(steps[i])
+        u = np.linspace(0, 1, n + 1)
+        uu, vv = np.meshgrid(u, u)
+        m = uu + vv <= 1.0
+        uu, vv = uu[m], vv[m]
+        pts = p0[i] + uu[:, None] * (p1[i] - p0[i]) + vv[:, None] * (p2[i] - p0[i])
+        idx = np.clip(((pts - lo) / cell).astype(int), 0, dims - 1)
+        grid[idx[:, 0], idx[:, 1], idx[:, 2]] = True
+    return {"grid": grid, "lo": lo, "cell": cell, "dims": dims}
+
+
+def support_cost(verts_rot: np.ndarray, tris: np.ndarray, occ: dict, r: np.ndarray) -> float:
+    """Removability-weighted support cost (weighted mm²) for one candidate
+    orientation. Every overhang face contributes its area × a penalty for how
+    ENCLOSED its support column is: 8 horizontal escape rays (in the candidate
+    frame) are marched through the part's occupancy grid — support you can't
+    reach (inside a bore/pocket) costs up to 10×, open external support ~1×.
+    This is what makes the optimizer prefer YOUR upside-down choice.
+
+    `verts_rot` must be the ROTATED-only mesh (no bed-drop translation), so
+    `c @ r` maps ray origins exactly back into the grid's original frame."""
+    areas, normals, centroids = _tri_geometry(verts_rot, tris)
+    zmin = float(verts_rot[:, 2].min())
+    mask = _overhang_mask(normals, centroids, zmin)
+    if not mask.any():
+        return 0.0
+    a = areas[mask]
+    c = centroids[mask]
+    # cap the ray work: keep the largest ~120 faces (they dominate the cost)
+    if len(a) > 120:
+        keep = np.argsort(a)[-120:]
+        a, c = a[keep], c[keep]
+
+    cell = occ["cell"]
+    grid = occ["grid"]
+    lo = occ["lo"]
+    dims = occ["dims"]
+    # candidate-frame directions → original frame (rays march the unrotated grid)
+    down = r.T @ np.array([0.0, 0.0, -1.0])
+    thetas = np.arange(8) * (math.pi / 4)
+    dirs = np.stack([np.cos(thetas), np.sin(thetas), np.zeros(8)], axis=1) @ r  # (8,3) original frame
+    # start just below each face (where the support column lives), original frame
+    starts = (c @ r) + down * (2.0 * cell)  # rotate centroids back: c_orig = c_rot @ R
+
+    n_steps = int(max(dims.max(), 8))
+    t = (np.arange(1, n_steps + 1) * cell)[None, None, :, None]  # (1,1,S,1)
+    pts = starts[:, None, None, :] + dirs[None, :, None, :] * t  # (P,8,S,3)
+    idx = ((pts - lo) / cell).astype(int)
+    inside = ((idx >= 0) & (idx < dims)).all(axis=3)
+    ii = np.clip(idx, 0, dims - 1)
+    occ_hit = grid[ii[..., 0], ii[..., 1], ii[..., 2]] & inside
+    blocked = occ_hit.any(axis=2)  # (P,8) — ray hits the part before escaping
+    frac = blocked.mean(axis=1)
+    weight = 1.0 + 9.0 * frac**2  # fully enclosed ⇒ 10×
+    return float((a * weight).sum())
+
+
 def _tri_geometry(verts: np.ndarray, tris: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(areas (M,), unit normals (M,3), centroids (M,3)) per triangle."""
     p0, p1, p2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
