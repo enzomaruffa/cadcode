@@ -85,6 +85,46 @@ useStore.subscribe((state) => {
   }
 });
 
+// --- the REAL build123d API (introspected server-side) -------------------------
+// Powers hover docs, parameter hints, and full-API completion — signatures come
+// from the installed package, so param order is always true (Box: length, width,
+// height…). Static per deploy → fetched once.
+
+interface B3dParam {
+  name: string;
+  default?: string;
+}
+interface B3dEntry {
+  kind: string; // function | class | enum | value
+  signature: string;
+  doc: string;
+  params?: B3dParam[];
+  members?: string[];
+}
+
+let b3dDocs: Record<string, B3dEntry> = {};
+fetch(`${HTTP_URL}/docs/build123d`)
+  .then((r) => r.json())
+  .then((d: Record<string, B3dEntry>) => {
+    b3dDocs = d ?? {};
+  })
+  .catch(() => void 0);
+
+/** Markdown hover/completion doc for an API entry. */
+function b3dMarkdown(name: string, e: B3dEntry): string {
+  const sig = e.signature && e.signature !== name ? e.signature : name;
+  return `\`\`\`python\n${sig}\n\`\`\`\n\n${e.doc || ""}`;
+}
+
+/** Auto-generate a snippet from the REAL signature: required params become
+ *  placeholders (capped at 5), all-optional callables get a bare cursor. */
+function b3dSnippet(name: string, e: B3dEntry): { insert: string; snippet: boolean } {
+  if (e.kind === "enum" || e.kind === "value") return { insert: name, snippet: false };
+  const required = (e.params ?? []).filter((p) => !("default" in p)).slice(0, 5);
+  if (!required.length) return { insert: `${name}($1)`, snippet: true };
+  return { insert: `${name}(${required.map((p, i) => `\${${i + 1}:${p.name}}`).join(", ")})`, snippet: true };
+}
+
 // --- curated build123d + cadcode names ---------------------------------------
 
 const TOP_LEVEL: Item[] = [
@@ -438,11 +478,23 @@ function importContext(before: string, model: monaco.editor.ITextModel): Item[] 
   if (/^\s*from\s+lib\.design\s+import\s+[\w\s,]*$/.test(before)) {
     return designTokens.map((c) => ({ label: c, insert: c, kind: K.Constant, detail: "design token" }));
   }
-  // from build123d import |
+  // from build123d import |  — the full REAL API once introspection has loaded
   if (/^\s*from\s+build123d\s+import\s+[\w\s,*]*$/.test(before)) {
-    return plain(BUILD123D_NAMES, K.Function).concat([
-      { label: "*", insert: "*", kind: K.Keyword, detail: "everything" },
-    ]);
+    const dsl = new Set(["show", "show_object", "require", "Range"]);
+    const api = Object.keys(b3dDocs).filter((n) => !dsl.has(n));
+    const names = api.length ? api.sort() : BUILD123D_NAMES;
+    return names
+      .map((n): Item => {
+        const e = b3dDocs[n];
+        return {
+          label: n,
+          insert: n,
+          kind: e?.kind === "class" ? K.Class : e?.kind === "enum" ? K.Enum : K.Function,
+          detail: e?.signature !== n ? e?.signature?.slice(0, 60) : undefined,
+          doc: e ? b3dMarkdown(n, e) : undefined,
+        };
+      })
+      .concat([{ label: "*", insert: "*", kind: K.Keyword, detail: "everything" }]);
   }
   // from lib.params import |
   if (/^\s*from\s+lib\.params\s+import\s+[\w\s,]*$/.test(before)) {
@@ -484,8 +536,29 @@ monaco.languages.registerCompletionItemProvider("python", {
         const doc = s.docs.find((d) => d.id === s.activeDocId);
         const own = doc?.origin?.project ?? null;
         const ownProj = catalog.projects.find((p) => p.name === own);
+        // Curated snippets first (hand-tuned inserts, real docs attached), then
+        // the REST of the real API auto-generated from introspected signatures.
+        const curated = new Set(TOP_LEVEL.map((t) => t.label));
+        const apiExtras: Item[] = Object.entries(b3dDocs)
+          .filter(([n]) => !curated.has(n))
+          .map(([n, e]) => {
+            const gen = b3dSnippet(n, e);
+            return {
+              label: n,
+              insert: gen.insert,
+              kind: e.kind === "class" ? K.Class : e.kind === "enum" ? K.Enum : K.Function,
+              detail: "build123d",
+              doc: b3dMarkdown(n, e),
+              snippet: gen.snippet,
+              sortText: "6" + n,
+            };
+          });
         items = [
-          ...TOP_LEVEL,
+          ...TOP_LEVEL.map((t) => ({
+            ...t,
+            doc: t.doc ?? (b3dDocs[t.label] ? b3dMarkdown(t.label, b3dDocs[t.label]) : undefined),
+          })),
+          ...apiExtras,
           ...partCompletions(model),
           ...(ownProj?.constants ?? []).map((t) => ({
             label: t,
@@ -517,6 +590,128 @@ monaco.languages.registerCompletionItemProvider("python", {
         insertTextRules: it.snippet ? SNIPPET : undefined,
         additionalTextEdits: it.extraEdits,
       })),
+    };
+  },
+});
+
+// --- hover docs -----------------------------------------------------------------
+// Hover any known name → real signature + docstring (build123d/DSL), or a part's
+// signature + doc, or what a constant is and where it lives.
+
+monaco.languages.registerHoverProvider("python", {
+  provideHover(model, position) {
+    const w = model.getWordAtPosition(position);
+    if (!w) return null;
+    const name = w.word;
+    const range = new monaco.Range(position.lineNumber, w.startColumn, position.lineNumber, w.endColumn);
+    const md = (value: string) => ({ range, contents: [{ value }] });
+
+    const e = b3dDocs[name];
+    if (e) return md(b3dMarkdown(name, e));
+    for (const p of catalog.projects) {
+      const part = p.parts.find((x) => x.name === name);
+      if (part) return md(`\`\`\`python\n${name}(${part.params})\n\`\`\`\n\n**part** · ${p.name}\n\n${part.doc}`);
+    }
+    const lp = catalog.lib_parts.find((x) => x.name === name);
+    if (lp) return md(`\`\`\`python\n${lp.signature}\n\`\`\`\n\n**part** · library\n\n${lp.doc}`);
+    if (designTokens.includes(name)) return md(`**${name}** — design token (\`lib.design\`)`);
+    for (const p of catalog.projects) {
+      if (p.constants.includes(name)) return md(`**${name}** — project constant (\`${p.name}/project.py\`)`);
+    }
+    return null;
+  },
+});
+
+// --- parameter hints --------------------------------------------------------------
+// Inside `Box(|` show the REAL parameter list with the active one highlighted —
+// so "is it height or length first" is answered as you type. Works for
+// build123d, the DSL, and parts (own/cross-project/library).
+
+/** The innermost enclosing call at the cursor: its callee name + which argument
+ *  the cursor is in (top-level comma count). Scans back across a few lines. */
+function findEnclosingCall(
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
+): { name: string; argIndex: number } | null {
+  const startLine = Math.max(1, position.lineNumber - 3);
+  let text = "";
+  for (let l = startLine; l < position.lineNumber; l++) text += model.getLineContent(l) + "\n";
+  text += model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+  let depth = 0;
+  let commas = 0;
+  for (let i = text.length - 1; i >= 0; i--) {
+    const c = text[i];
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "(") {
+      if (depth === 0) {
+        const m = /([A-Za-z_]\w*)\s*$/.exec(text.slice(0, i));
+        return m ? { name: m[1], argIndex: commas } : null;
+      }
+      depth--;
+    } else if (c === "[" || c === "{") {
+      if (depth > 0) depth--;
+      else return null;
+    } else if (c === "," && depth === 0) commas++;
+  }
+  return null;
+}
+
+/** Where a parameter name sits inside the signature label (word-boundary match),
+ *  so Monaco highlights the right token even when the name recurs in a type. */
+function paramSpan(sig: string, name: string): [number, number] | string {
+  const m = new RegExp(`[(,]\\s*(${name})\\s*[:=,)]`).exec(sig);
+  return m && m.index >= 0 ? [m.index + m[0].indexOf(name), m.index + m[0].indexOf(name) + name.length] : name;
+}
+
+function signatureFor(name: string): { label: string; doc: string; params: B3dParam[] } | null {
+  const e = b3dDocs[name];
+  if (e && e.kind !== "value" && e.kind !== "enum") {
+    return { label: e.signature, doc: e.doc, params: e.params ?? [] };
+  }
+  const parse = (paramStr: string): B3dParam[] =>
+    paramStr
+      .split(",")
+      .map((s) => s.split(/[:=]/)[0].trim())
+      .filter(Boolean)
+      .map((n) => ({ name: n }));
+  for (const p of catalog.projects) {
+    const part = p.parts.find((x) => x.name === name);
+    if (part) return { label: `${name}(${part.params})`, doc: part.doc, params: parse(part.params) };
+  }
+  const lp = catalog.lib_parts.find((x) => x.name === name);
+  if (lp) {
+    const inner = lp.signature.slice(lp.signature.indexOf("(") + 1, lp.signature.lastIndexOf(")"));
+    return { label: lp.signature, doc: lp.doc, params: parse(inner) };
+  }
+  return null;
+}
+
+monaco.languages.registerSignatureHelpProvider("python", {
+  signatureHelpTriggerCharacters: ["(", ","],
+  signatureHelpRetriggerCharacters: [","],
+  provideSignatureHelp(model, position) {
+    const call = findEnclosingCall(model, position);
+    if (!call) return null;
+    const info = signatureFor(call.name);
+    if (!info) return null;
+    return {
+      value: {
+        signatures: [
+          {
+            label: info.label,
+            documentation: info.doc ? { value: info.doc.slice(0, 500) } : undefined,
+            parameters: info.params.map((p) => ({
+              label: paramSpan(info.label, p.name),
+              documentation: p.default !== undefined ? { value: `default: \`${p.default}\`` } : undefined,
+            })),
+          },
+        ],
+        activeSignature: 0,
+        activeParameter: Math.min(call.argIndex, Math.max(info.params.length - 1, 0)),
+      },
+      dispose() {
+        /* nothing to release */
+      },
     };
   },
 });

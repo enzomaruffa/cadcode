@@ -490,6 +490,17 @@ def _slice_settings(payload: dict) -> dict:
     }
 
 
+@app.get("/docs/build123d")
+async def docs_build123d() -> dict:
+    """Real build123d signatures + docstrings (introspected from the installed
+    package) — powers editor hover, parameter hints, and full-API completion."""
+    import asyncio
+
+    from app.b3d_docs import build123d_docs
+
+    return await asyncio.to_thread(build123d_docs)
+
+
 @app.get("/completions")
 async def completions() -> dict:
     """Everything the editor's autocomplete needs in one call: all projects
