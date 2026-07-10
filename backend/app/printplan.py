@@ -49,8 +49,39 @@ _PHASE2_KEEP = 6
 STRATEGIES = ("material", "plates", "fastest")
 
 
+def _hint_penalty(hints: list[dict], r: Any) -> float:
+    """How badly a candidate orientation violates the part's declared print
+    intent. flow=(x,y,z): water runs along this part-frame vector — layer ridges
+    are contour lines, so the flow must lie IN the layer plane (rotated flow ⊥ Z);
+    penalty ∝ |rotated_flow · ẑ|. cosmetic faces: their normals must not end up
+    facing DOWN (support scars) — penalty ∝ face area. Hints outrank strategy."""
+    import numpy as np
+
+    pen = 0.0
+    for h in hints or []:
+        f = h.get("flow")
+        if f is not None:
+            v = np.asarray(f, dtype=float)
+            n = np.linalg.norm(v)
+            if n > 0:
+                pen += 1000.0 * abs(float((r @ (v / n))[2]))
+        for face in h.get("cosmetic_faces") or []:
+            try:
+                nrm = face.normal_at(face.center())
+                nv = r @ np.array([float(nrm.X), float(nrm.Y), float(nrm.Z)])
+                if nv[2] < -0.35:  # would need support / sit on the bed → scarred
+                    pen += 10.0 * float(face.area)
+            except Exception:  # noqa: BLE001 - hints must never break planning
+                continue
+    return pen
+
+
 def _orient(
-    obj: Any, strategy: str = "material", supports: bool = True
+    obj: Any,
+    strategy: str = "material",
+    supports: bool = True,
+    hints: list[dict] | None = None,
+    force: str | None = None,
 ) -> tuple[Any, str, float, float, tuple[Any, Any], Any]:
     """Pick the best orientation for the strategy. Phase 1: ~48 candidate down
     directions scored on removability-weighted support cost (+ height/footprint)
@@ -79,29 +110,41 @@ def _orient(
     verts, tris = mesh_of(obj)
     occ = build_occupancy(verts, tris)
 
-    # Phase 1 — cheap metrics for every candidate.
-    phase1: list[tuple[tuple[float, float, float], str, Any, Any, float, Any]] = []
-    for label, d in candidate_down_dirs():
+    # Candidates: the full sweep, or just the user's forced orientation.
+    candidates = candidate_down_dirs()
+    if force and force != "auto":
+        forced = [c for c in candidates if c[0] == force]
+        if forced:
+            candidates = forced
+
+    # Phase 1 — cheap metrics for every candidate. Declared print intent
+    # (print_hint flow/cosmetic) outranks everything: it leads the sort key.
+    phase1: list[tuple[tuple[float, float, float, float], str, Any, Any, float, float, Any]] = []
+    for label, d in candidates:
         r, axis, angle = rotation_to_down(d)
         vr = verts @ r.T
         cost = support_cost(vr, tris, occ, r)  # rotated-only (support_cost maps rays back to the grid)
+        pen = _hint_penalty(hints or [], r)
         v = vr - [0.0, 0.0, float(vr[:, 2].min())]  # dropped onto the bed for the size metrics
         height = float(v[:, 2].max())
         footprint = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
-        phase1.append(((round(cost, 1), round(height, 1), round(footprint, 1)), label, axis, angle, cost, v))
+        phase1.append(
+            ((round(pen, 1), round(cost, 1), round(height, 1), round(footprint, 1)), label, axis, angle, cost, pen, v)
+        )
     phase1.sort(key=lambda p: p[0])
 
     # Phase 2 — real layer-sliced estimate for the survivors; strategy picks.
     best: tuple[tuple[float, ...], str, Any, Any, float, float, Any] | None = None
-    for (_cost_key, _h, fp), label, axis, angle, cost, v in phase1[:_PHASE2_KEEP]:
+    for (_pen_key, _cost_key, _h, fp), label, axis, angle, cost, pen, v in phase1[:_PHASE2_KEEP]:
         minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
         sup = support_area(v, tris)
+        pen_r = round(pen, 1)
         if strategy == "plates":
-            key = (fp, cost, minutes)
+            key = (pen_r, fp, cost, minutes)
         elif strategy == "fastest":
-            key = (minutes, cost, fp)
+            key = (pen_r, minutes, cost, fp)
         else:  # material — removability-weighted support first
-            key = (cost, minutes, fp)
+            key = (pen_r, cost, minutes, fp)
         if best is None or key < best[0]:
             best = (key, label, axis, angle, sup, minutes, v)
     assert best is not None
@@ -275,13 +318,19 @@ def plan_print(
     from app.tessellate import tessellate
 
     wanted = [
-        (str(i.get("project") or "") or None, str(i.get("name") or ""), max(int(i.get("qty") or 0), 0)) for i in items
+        (
+            str(i.get("project") or "") or None,
+            str(i.get("name") or ""),
+            max(int(i.get("qty") or 0), 0),
+            str(i.get("orient") or "auto"),  # per-part user override, "auto" = search
+        )
+        for i in items
     ]
     wanted = [w for w in wanted if w[1] and w[2] > 0]
     if not wanted:
         return {"ok": False, "error": "pick at least one part (qty ≥ 1)"}
 
-    needs_projects = any(p for p, _n, _q in wanted)
+    needs_projects = any(p for p, _n, _q, _o in wanted)
     tmp = Path(tempfile.mkdtemp(prefix="cadprint_")) if needs_projects else None
 
     with _RUN_LOCK:
@@ -294,19 +343,27 @@ def plan_print(
 
             # (label, solid, orientation, support, per-part est minutes, qty, mesh)
             oriented: list[tuple[str, Any, str, float, float, int, tuple[Any, Any]]] = []
-            # Parts may declare specs with the ambient `require(...)` — bind the
-            # DSL while building (same as any run), else such parts NameError.
+            # Parts may declare specs (`require`) and PRINT INTENT (`print_hint`)
+            # — bind the ambient DSL while building, and slice each part's newly
+            # collected hints off the shared collector.
             from app.kernel.runner import _ambient_dsl, _make_namespace
 
             ns, _shown, _specs = _make_namespace()
+            all_hints: list[dict] = ns["__print_hints__"]
             with _ambient_dsl(ns):
-                for project, name, qty in wanted:
+                for project, name, qty, orient_override in wanted:
+                    before = len(all_hints)
                     try:
                         base = _build_part(project, name)
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
+                    part_hints = all_hints[before:]
                     solid, orientation, support, minutes, mesh, _prof = _orient(
-                        base, strategy if strategy in STRATEGIES else "material", supports
+                        base,
+                        strategy if strategy in STRATEGIES else "material",
+                        supports,
+                        hints=part_hints,
+                        force=orient_override,
                     )
                     oriented.append(
                         (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty, mesh)
@@ -370,8 +427,10 @@ def plan_print(
     # A part "needs support" when its best orientation still leaves meaningful
     # overhang area — surfaced so the user sees why a part costs what it does.
     _SUP_MIN = 25.0  # mm² — below this, overhang is negligible (chamfers etc.)
-    stats = [
-        {
+    _SPLIT_MIN = 400.0  # mm² — even the BEST orientation is support-heavy → suggest a split
+    stats = []
+    for label, _s, orientation, support, minutes, qty, mesh in oriented:
+        row: dict[str, Any] = {
             "name": label,
             "qty": qty,
             "orientation": orientation,
@@ -379,8 +438,17 @@ def plan_print(
             "needs_support": support > _SUP_MIN,
             "est_min": round(minutes, 1),
         }
-        for label, _s, orientation, support, minutes, qty, _mesh in oriented
-    ]
+        if support > _SPLIT_MIN:
+            # No orientation escapes heavy support — the honest fix is often to
+            # split into two flat-backed halves and print both cut-face down.
+            h = float(mesh[0][:, 2].max() - mesh[0][:, 2].min())
+            row["suggest_split"] = True
+            row["split_hint"] = (
+                f"even the best orientation needs ~{support:.0f} mm² of support — consider splitting into two "
+                f"flat-backed halves: `a, b = split(part, bisect_by=Plane.XY.offset({h / 2:.1f}), keep=Keep.BOTH)` "
+                "then print both cut-face down (glue or add alignment pins)."
+            )
+        stats.append(row)
     result: dict[str, Any] = {
         "ok": True,
         "shapes": shapes,

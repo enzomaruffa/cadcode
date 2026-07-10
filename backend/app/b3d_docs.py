@@ -41,6 +41,20 @@ _DSL: dict[str, dict[str, Any]] = {
         "doc": "Executable spec (CAD-as-TDD): asserts a geometric condition every run — e.g. `require(part.volume > 0, 'not empty')`. Ambient in parts too. Failures show in the specs panel and gate the agent.",
         "params": [{"name": "condition"}, {"name": "message", "default": "'requirement'"}],
     },
+    "print_hint": {
+        "kind": "function",
+        "signature": "print_hint(target=None, *, flow=None, cosmetic=False)",
+        "doc": "Declare PRINT INTENT in the model — the print planner's orientation search obeys it. "
+        "`print_hint(part, flow=(0,0,-1))`: water/fluid runs along this part-frame vector → the planner keeps "
+        "layer lines PARALLEL to the flow (prints the part sideways if needed). "
+        "`print_hint(part.faces().sort_by(Axis.Z)[-1], cosmetic=True)`: keep support scars and bed texture off "
+        "these faces. Returns target; a no-op outside print planning.",
+        "params": [
+            {"name": "target", "default": "None"},
+            {"name": "flow", "default": "None"},
+            {"name": "cosmetic", "default": "False"},
+        ],
+    },
     "Range": {
         "kind": "class",
         "signature": "Range(min, max)",

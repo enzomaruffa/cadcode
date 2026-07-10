@@ -15,7 +15,12 @@ interface PlanStats {
   support_area: number;
   needs_support?: boolean;
   est_min?: number;
+  suggest_split?: boolean; // even the best orientation is support-heavy
+  split_hint?: string; // copyable build123d split() suggestion
 }
+
+// Per-part orientation override choices (must match the backend's principal labels).
+const ORIENT_CHOICES = ["auto", "as-is", "upside-down", "on side +X", "on side -X", "on side +Y", "on side -Y"];
 interface PlateInfo {
   index: number;
   w: number;
@@ -114,6 +119,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [bedD, setBedD] = useState(220);
   const [strategy, setStrategy] = useState<Strategy>("material");
   const [supports, setSupports] = useState(true); // auto-add support material where overhangs need it
+  const [orients, setOrients] = useState<Record<string, string>>({}); // per-part orientation override
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -261,8 +267,11 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   }, [filament]);
 
   const items = useMemo(
-    () => rows.filter((r) => (qty[r.key] ?? 0) > 0).map((r) => ({ project: r.project, name: r.name, qty: qty[r.key] })),
-    [rows, qty],
+    () =>
+      rows
+        .filter((r) => (qty[r.key] ?? 0) > 0)
+        .map((r) => ({ project: r.project, name: r.name, qty: qty[r.key], orient: orients[r.key] ?? "auto" })),
+    [rows, qty, orients],
   );
 
   const bump = (key: string, delta: number) =>
@@ -387,6 +396,16 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
       await sliceOne(p.index, token);
     }
   };
+
+  // An orientation override re-plans automatically (the memoized `items` already
+  // carry the new orient by the time this effect runs). Placed after autoSlice —
+  // the effect → doPlan → autoSlice chain must not reference ahead.
+  const orientsRev = useRef(0);
+  useEffect(() => {
+    if (orientsRev.current++ === 0 || !plan) return; // skip mount / no plan yet
+    void doPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orients]);
 
   // Download a file from a print endpoint (export → STL/3MF; gcode → sliced,
   // ready-to-print G-code). `busyKey` shows a spinner on the invoking button.
@@ -735,22 +754,44 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
 
           {plan?.stats && (
             <div className="print-result">
-              {plan.stats.map((s) => (
-                <div className="print-stat" key={s.name}>
-                  <span>
-                    {s.qty}× {s.name}
-                  </span>
-                  <span>
-                    {s.orientation === "as-is" ? "as modeled" : `rotated ${s.orientation}`}
-                    {s.support_area === 0
-                      ? " · no overhang 🎉"
-                      : plan.supports === false
-                        ? ` · ⚠ ${s.support_area} mm² overhang, unsupported`
-                        : ` · ~${s.support_area} mm² support`}
-                    {s.est_min != null ? ` · ~${fmtMin(s.est_min)} each` : ""}
-                  </span>
-                </div>
-              ))}
+              {plan.stats.map((s) => {
+                // stats label "project/name" or "name" → the picker row key
+                const slash = s.name.indexOf("/");
+                const key = slash >= 0 ? `${s.name.slice(0, slash)}:${s.name.slice(slash + 1)}` : `:${s.name}`;
+                return (
+                  <div className="print-stat-block" key={s.name}>
+                    <div className="print-stat">
+                      <span>
+                        {s.qty}× {s.name}
+                      </span>
+                      <span>
+                        <select
+                          className="print-orient"
+                          value={orients[key] ?? "auto"}
+                          onChange={(e) => {
+                            setOrients((o) => ({ ...o, [key]: e.target.value }));
+                            dropSlices();
+                          }}
+                          title="Override this part's print orientation (auto = optimizer's pick)"
+                        >
+                          {ORIENT_CHOICES.map((c) => (
+                            <option key={c} value={c}>
+                              {c === "auto" ? `auto (${s.orientation})` : c}
+                            </option>
+                          ))}
+                        </select>
+                        {s.support_area === 0
+                          ? " · no overhang 🎉"
+                          : plan.supports === false
+                            ? ` · ⚠ ${s.support_area} mm² overhang, unsupported`
+                            : ` · ~${s.support_area} mm² support`}
+                        {s.est_min != null ? ` · ~${fmtMin(s.est_min)} each` : ""}
+                      </span>
+                    </div>
+                    {s.suggest_split && s.split_hint && <div className="print-split-hint">✂ {s.split_hint}</div>}
+                  </div>
+                );
+              })}
               <div className={plan.fits ? "print-fit ok" : "print-fit bad"}>
                 {(plan.plates?.length ?? 1) === 1
                   ? `one plate, ${plan.plates?.[0]?.w}×${plan.plates?.[0]?.d} mm on a ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed`

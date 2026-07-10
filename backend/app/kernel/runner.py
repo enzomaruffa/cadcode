@@ -25,7 +25,9 @@ from app.tessellate import tessellate
 
 SOURCE_FILENAME = "<cad-source>"
 _MISSING = object()
-_REQUIRE = "require"  # attribute name (a variable, so ruff B010 stays quiet)
+# Ambient DSL names bound on builtins during a run (variables, so ruff B010
+# stays quiet): parts are imported as modules and wouldn't otherwise see them.
+_AMBIENT = ("require", "print_hint")
 
 
 @contextmanager
@@ -35,18 +37,20 @@ def _ambient_dsl(ns: dict[str, Any]):
     specs (`require(...)`) that get collected into the run. ``show`` stays
     scene-only on purpose: parts return shapes, scenes render them. Runs are
     serialized, so temporarily binding it on ``builtins`` is safe."""
-    prev = getattr(_builtins, _REQUIRE, _MISSING)
-    setattr(_builtins, _REQUIRE, ns["require"])
+    prev = {name: getattr(_builtins, name, _MISSING) for name in _AMBIENT}
+    for name in _AMBIENT:
+        setattr(_builtins, name, ns[name])
     try:
         yield
     finally:
-        if prev is _MISSING:
-            try:
-                delattr(_builtins, _REQUIRE)
-            except AttributeError:
-                pass
-        else:
-            setattr(_builtins, _REQUIRE, prev)
+        for name in _AMBIENT:
+            if prev[name] is _MISSING:
+                try:
+                    delattr(_builtins, name)
+                except AttributeError:
+                    pass
+            else:
+                setattr(_builtins, name, prev[name])
 
 
 # Objects from the most recent successful run, keyed by their shape-tree id
@@ -131,6 +135,30 @@ def _make_namespace(
         specs.append({"passed": passed, "message": message or "requirement"})
         return passed
 
+    hints: list[dict[str, Any]] = []
+
+    def print_hint(target: Any = None, *, flow: Any = None, cosmetic: bool = False, **_kw: Any) -> Any:
+        """Declare PRINT INTENT in the model — the print planner's orientation
+        search obeys it (code-as-truth for manufacturing):
+          print_hint(part, flow=(0, 0, -1))   # water drains this way → layer
+                                              # lines are kept PARALLEL to the flow
+          print_hint(part.faces().sort_by(Axis.Z)[-1], cosmetic=True)
+                                              # keep support scars / bed texture
+                                              # off these faces
+        Returns `target` so it can be used inline. A no-op outside planning."""
+        h: dict[str, Any] = {}
+        if flow is not None:
+            try:
+                h["flow"] = (float(flow[0]), float(flow[1]), float(flow[2]))
+            except (TypeError, ValueError, IndexError):
+                pass
+        if cosmetic and target is not None:
+            faces = list(target) if hasattr(target, "__iter__") else [target]
+            h["cosmetic_faces"] = [f for f in faces if hasattr(f, "normal_at")]
+        if h:
+            hints.append(h)
+        return target
+
     ns: dict[str, Any] = {
         "__name__": "__cad__",
         "__builtins__": builtins_override if builtins_override is not None else __builtins__,
@@ -138,6 +166,8 @@ def _make_namespace(
         "show": show,
         "show_object": show_object,
         "require": require,
+        "print_hint": print_hint,
+        "__print_hints__": hints,  # planner reads collected hints from here
         # Motion-sim clearance (plan §7): defined so a script's
         # `require(min_clearance_through_motion >= CLEARANCE)` runs (and passes)
         # in the normal technical render; the sim re-execs with the real value.

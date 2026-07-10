@@ -2467,6 +2467,25 @@ textarea {
   border-color: var(--accent-dim);
   color: var(--accent);
 }
+.print-orient {
+  background: var(--bg-pane);
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-1);
+  max-width: 150px;
+}
+.print-orient:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.print-split-hint {
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  padding: 2px 0 var(--sp-1) var(--sp-3);
+  font-family: var(--font-mono);
+}
 .print-plate-dl {
   display: flex;
   align-items: center;

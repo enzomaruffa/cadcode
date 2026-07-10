@@ -260,6 +260,14 @@ const TOP_LEVEL: Item[] = [
     detail: "spec (CAD-as-TDD)",
     snippet: true,
   },
+  {
+    label: "print_hint",
+    insert: "print_hint(${1:part}, flow=(${2:0}, ${3:0}, ${4:-1}))",
+    kind: K.Function,
+    detail: "print intent (flow / cosmetic)",
+    doc: "Declare print intent the plate planner obeys: `flow=(x,y,z)` keeps layer lines parallel to a fluid path (prints sideways if needed); `print_hint(faces, cosmetic=True)` keeps support scars off faces.",
+    snippet: true,
+  },
   { label: "Range", insert: "Range(${1:min}, ${2:max})", kind: K.Function, detail: "slider range", snippet: true },
   { label: "Annotated", insert: "Annotated[${1:float}, Range(${2:min}, ${3:max})]", kind: K.Class, snippet: true },
 ];
@@ -268,7 +276,7 @@ const TOP_LEVEL: Item[] = [
 const BUILD123D_NAMES = [
   ...new Set([
     ...TOP_LEVEL.filter(
-      (t) => !["show", "show_object", "require", "Range", "Annotated", "connect_to"].includes(t.label),
+      (t) => !["show", "show_object", "require", "print_hint", "Range", "Annotated", "connect_to"].includes(t.label),
     ).map((t) => t.label),
     "BuildPart",
     "BuildSketch",
