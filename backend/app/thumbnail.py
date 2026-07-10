@@ -121,7 +121,7 @@ def iso_svg_shapes(shapes: dict, size: int = 140) -> str:
     of parts) — used for library thumbnails AND the agent's vision sanity pass."""
     # Collect projected, depth-keyed, shaded triangles + edge segments.
     tris: list[tuple[float, list[tuple[float, float]], str]] = []
-    edges: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    edges: list[tuple[float, tuple[float, float], tuple[float, float]]] = []
     allpts: list[tuple[float, float]] = []
 
     for shape, (tpos, tq), base_rgb in _leaves(shapes):
@@ -154,8 +154,12 @@ def iso_svg_shapes(shapes: dict, size: int = 140) -> str:
             for i in range(0, len(edata) - 1, 2):
                 p1, p2 = edata[i], edata[i + 1]
                 if len(p1) >= 3 and len(p2) >= 3:
-                    a2, b2 = _iso(*world(tuple(p1[:3]))), _iso(*world(tuple(p2[:3])))
-                    edges.append((a2, b2))
+                    w1, w2 = world(tuple(p1[:3])), world(tuple(p2[:3]))
+                    a2, b2 = _iso(*w1), _iso(*w2)
+                    # depth-key the edge like the triangles so hidden lines stay
+                    # hidden (drawing all edges last made everything look x-ray)
+                    edepth = (sum(w1) + sum(w2)) / 2.0
+                    edges.append((edepth, a2, b2))
                     allpts.extend((a2, b2))
 
     if not allpts:
@@ -176,17 +180,25 @@ def iso_svg_shapes(shapes: dict, size: int = 140) -> str:
     def sy(y: float) -> float:
         return y * scale + oy
 
-    tris.sort(key=lambda t: t[0])  # far -> near (painter's)
-    body = []
-    for _depth, p, fill in tris:
+    # One painter's pass over triangles AND edges together (far → near), so an
+    # edge behind a nearer face gets painted over — no more x-ray look. Each
+    # triangle strokes with its OWN fill (hides AA seams between triangles
+    # without outlining the tessellation); only feature edges get _EDGE.
+    items: list[tuple[float, str]] = []
+    for depth, p, fill in tris:
         pts = " ".join(f"{sx(px):.1f},{sy(py):.1f}" for px, py in p)
-        body.append(f'<polygon points="{pts}" fill="{fill}"/>')
-    for (x1, y1), (x2, y2) in edges:
-        body.append(f'<line x1="{sx(x1):.1f}" y1="{sy(y1):.1f}" x2="{sx(x2):.1f}" y2="{sy(y2):.1f}"/>')
+        items.append((depth, f'<polygon points="{pts}" fill="{fill}" stroke="{fill}"/>'))
+    for depth, (x1, y1), (x2, y2) in edges:
+        items.append(
+            (
+                depth + 0.01,
+                f'<line x1="{sx(x1):.1f}" y1="{sy(y1):.1f}" x2="{sx(x2):.1f}" y2="{sy(y2):.1f}" stroke="{_EDGE}"/>',
+            )
+        )
+    items.sort(key=lambda t: t[0])
+    body = [svg for _d, svg in items]
 
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
-        f'stroke="{_EDGE}" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round">'
-        + "".join(body)
-        + "</svg>"
+        f'stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round">' + "".join(body) + "</svg>"
     )
