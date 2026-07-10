@@ -39,7 +39,8 @@ export interface CadCanvasHandle {
   setSection: (axis: SectionAxis | null, offset?: number) => void;
   setMode: (mode: InteractionMode) => void;
   clearMeasure: () => void;
-  setGrid: (on: boolean) => void;
+  setGrid: (on: boolean | "off" | "floor" | "walls") => void;
+  getModelSize: () => [number, number, number] | null;
   setPose: (poses: Record<string, [[number, number, number], [number, number, number, number]]>) => void;
   flashLeaves: (ids: string[], hex: string) => void;
   resetPhysics: () => void;
@@ -73,6 +74,7 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
     clearMeasure: () => viewerRef.current?.clearMeasure(),
     setGrid: (on) => viewerRef.current?.setGrid(on),
+    getModelSize: () => viewerRef.current?.getModelSize() ?? null,
     setPose: (poses) => viewerRef.current?.setPose(poses),
     flashLeaves: (ids, hex) => viewerRef.current?.flashLeaves(ids, hex),
     resetPhysics: () => viewerRef.current?.resetPhysics(),

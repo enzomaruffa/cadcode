@@ -4,7 +4,7 @@ import type { NotifyCallback, NotifyChange, PickEvent, RenderPreset, TessShapes,
 import { buildSceneGraph, type SceneGraph } from "./SceneGraph";
 import { CameraRig } from "./CameraRig";
 import { Controls } from "./Controls";
-import { Grid } from "./Grid";
+import { Grid, type GridMode } from "./Grid";
 import { Gizmo } from "./Gizmo";
 import { deepDispose } from "./dispose";
 import { TECHNICAL } from "../materials/materials";
@@ -298,9 +298,17 @@ export class CadViewer {
     this.requestRender();
   }
 
-  setGrid(on: boolean): void {
+  setGrid(on: boolean | GridMode): void {
     this.grid.setEnabled(on);
     this.requestRender();
+  }
+
+  /** Model bbox size [w, d, h] in mm — drives the size chip in the toolbar. */
+  getModelSize(): [number, number, number] | null {
+    const bb = this.sceneGraph?.bbox;
+    if (!bb) return null;
+    const s = bb.getSize(new THREE.Vector3());
+    return [s.x, s.y, s.z];
   }
 
   private applyClipping(): void {

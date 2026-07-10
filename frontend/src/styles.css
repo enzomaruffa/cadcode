@@ -2486,6 +2486,15 @@ textarea {
   padding: 2px 0 var(--sp-1) var(--sp-3);
   font-family: var(--font-mono);
 }
+.vp-dims {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
 .print-plate-dl {
   display: flex;
   align-items: center;

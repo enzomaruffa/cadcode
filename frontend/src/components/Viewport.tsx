@@ -13,9 +13,10 @@ export function Viewport() {
   const [axis, setAxis] = useState<SectionAxis | null>(null);
   const [offset, setOffset] = useState(0.5);
 
-  const [grid, setGrid] = useState(true);
+  const [grid, setGrid] = useState<"off" | "floor" | "walls">("floor");
   const [physics, setPhysics] = useState(false);
   const [explode, setExplode] = useState(0); // exploded-view spread (0–1)
+  const [dims, setDims] = useState<[number, number, number] | null>(null); // model W×D×H chip
 
   const shapes = useStore((s) => s.shapes);
   const rev = useStore((s) => s.geometryRev);
@@ -32,6 +33,13 @@ export function Viewport() {
   useEffect(() => {
     if (!physics) viewerRef.current?.setExplode(explode);
   }, [explode, rev, physics]);
+
+  // Model size chip: refresh after each render lands (small delay lets the
+  // scene graph rebuild first).
+  useEffect(() => {
+    const t = setTimeout(() => setDims(viewerRef.current?.getModelSize() ?? null), 120);
+    return () => clearTimeout(t);
+  }, [rev]);
 
   // Bake the current physics arrangement back into the script (Location wraps),
   // then stop the sim — the settled/dragged poses become code (the invariant).
@@ -170,16 +178,21 @@ export function Viewport() {
           />
         )}
         <button
-          className={grid ? "vp-btn on" : "vp-btn"}
+          className={grid !== "off" ? "vp-btn on" : "vp-btn"}
           onClick={() => {
-            const next = !grid;
+            const next = grid === "off" ? "floor" : grid === "floor" ? "walls" : "off";
             setGrid(next);
             viewerRef.current?.setGrid(next);
           }}
-          title="Toggle the ground grid"
+          title="Ruler grid — measured cutting mat with real coordinates. Click to cycle: floor → floor+walls → off"
         >
-          grid
+          {grid === "walls" ? "ruler+walls" : "ruler"}
         </button>
+        {dims && (
+          <span className="vp-dims" title="Model bounding box (W × D × H)">
+            {dims.map((d) => (d >= 100 ? Math.round(d) : Math.round(d * 10) / 10)).join(" × ")} mm
+          </span>
+        )}
         <button className="vp-btn" onClick={() => viewerRef.current?.fitView()} title="Fit view">
           fit
         </button>
