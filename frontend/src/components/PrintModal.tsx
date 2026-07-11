@@ -17,6 +17,8 @@ interface PlanStats {
   est_min?: number;
   suggest_split?: boolean; // even the best orientation is support-heavy
   split_hint?: string; // copyable build123d split() suggestion
+  probe?: { support_g?: number; model_g?: number; minutes?: number; slicer?: string; candidates?: number };
+  swapped_to_fit?: boolean; // packing swapped this part to a smaller-footprint orientation
 }
 
 // Per-part orientation override choices (must match the backend's principal labels).
@@ -42,6 +44,7 @@ interface Plan {
   plates?: PlateInfo[];
   slicer?: boolean; // a real slicer is available server-side for exact times
   slicer_name?: string; // which engine: "orca" | "prusa" | "none"
+  probed?: boolean; // orientations were ground-truthed by the real slicer
 }
 
 // A finished slice: exact time + filament (+ weight) + whether support was laid.
@@ -119,6 +122,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [bedD, setBedD] = useState(220);
   const [strategy, setStrategy] = useState<Strategy>("material");
   const [supports, setSupports] = useState(true); // auto-add support material where overhangs need it
+  const [probe, setProbe] = useState(false); // ground-truth orientations with the real slicer (slow, exact)
   const [orients, setOrients] = useState<Record<string, string>>({}); // per-part orientation override
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -289,6 +293,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     infill,
     support_style: supportStyle,
     adhesion,
+    probe,
   });
 
   const changeSupports = (on: boolean) => {
@@ -666,6 +671,13 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 </button>
               </>
             )}
+            <button
+              className={probe ? "on" : ""}
+              onClick={() => setProbe((p) => !p)}
+              title="Ground truth: really slice the top orientation candidates (tree supports and all) and rank by the slicer's actual support grams. Slow — seconds per part — but exact."
+            >
+              🎯 ground truth
+            </button>
           </div>
 
           <div className="print-picker">
@@ -785,7 +797,15 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                           : plan.supports === false
                             ? ` · ⚠ ${s.support_area} mm² overhang, unsupported`
                             : ` · ~${s.support_area} mm² support`}
-                        {s.est_min != null ? ` · ~${fmtMin(s.est_min)} each` : ""}
+                        {s.probe?.support_g != null
+                          ? ` · 🎯 ${s.probe.support_g} g support / ${s.probe.model_g ?? "?"} g part (${s.probe.slicer})`
+                          : ""}
+                        {s.probe?.minutes != null
+                          ? ` · ${fmtMin(s.probe.minutes)} each`
+                          : s.est_min != null
+                            ? ` · ~${fmtMin(s.est_min)} each`
+                            : ""}
+                        {s.swapped_to_fit ? " · ↻ re-oriented to save a plate" : ""}
                       </span>
                     </div>
                     {s.suggest_split && s.split_hint && <div className="print-split-hint">✂ {s.split_hint}</div>}
