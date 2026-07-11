@@ -238,7 +238,12 @@ def _orient(
         d = float(av[:, 1].max() - av[:, 1].min())
         area = w * d
         dominated = any(
-            (o["w"] * o["d"] <= area and o["cost"] <= acost and (o["w"] * o["d"], o["cost"]) != (area, acost))
+            (
+                o["w"] * o["d"] <= area
+                and o["cost"] <= acost
+                and o["minutes"] <= amin
+                and (o["w"] * o["d"], o["cost"], o["minutes"]) != (area, acost, amin)
+            )
             for o in alts
         )
         if not dominated:
@@ -548,38 +553,50 @@ def plan_print(
             rects, placements, plates, fits = pack_current()
             if fits and len(plates) > 1:
                 # Greedy: each round, apply the single orientation swap that
-                # reduces the plate count the most for the least extra support.
-                # Hints (pen) are never traded away; cost may grow by at most
-                # 3× (plates strategy) / 75% + 100mm² (others).
-                limit = 3.0 if strategy == "plates" else 0.75
+                # reduces the plate count the most for the least extra cost —
+                # measured in the STRATEGY'S own currency (material → support
+                # cost, fastest → minutes; plates is generous on both, since
+                # plate count IS its objective). Hints (pen) are never traded.
+                def swap_price(cur: dict | None, alt: dict) -> tuple[float, bool]:
+                    """(price of this swap in the strategy's currency, acceptable?)"""
+                    cur_cost = cur["cost"] if cur else 0.0
+                    cur_min = cur["minutes"] if cur else 0.0
+                    if strategy == "fastest":
+                        incr = alt["minutes"] - cur_min
+                        return incr, incr <= cur_min * 0.25 + 10.0
+                    if strategy == "plates":
+                        incr = alt["cost"] - cur_cost
+                        return incr, incr <= cur_cost * 3.0 + 200.0
+                    incr = alt["cost"] - cur_cost  # material
+                    return incr, incr <= cur_cost * 0.75 + 100.0
+
                 for _round in range(6):
                     baseline = len(plates)
-                    best_swap: tuple[float, int, dict] | None = None
+                    best_swap: tuple[int, float, int, dict] | None = None  # (plates, price, part, alt)
                     for i, o in enumerate(oriented):
                         cur = o["swap"] or next(
                             (a for a in o["extra"]["alts"] if a["label"] == o["orientation"]),
                             None,
                         )
-                        cur_cost = cur["cost"] if cur else 0.0
                         cur_area = (cur["w"] * cur["d"]) if cur else part_dims(o)[0] * part_dims(o)[1]
                         cur_pen = cur["pen"] if cur else 0.0
                         for alt in o["extra"]["alts"]:
                             if alt is cur or alt["w"] * alt["d"] >= cur_area or alt["pen"] > cur_pen:
                                 continue
-                            incr = alt["cost"] - cur_cost
-                            if incr > cur_cost * limit + 100.0:
+                            price, ok = swap_price(cur, alt)
+                            if not ok:
                                 continue
                             prev = o["swap"]
                             o["swap"] = alt
                             _r, _pl, trial_plates, trial_fits = pack_current()
                             o["swap"] = prev
                             if trial_fits and len(trial_plates) < baseline:
-                                score = (len(trial_plates), incr)
-                                if best_swap is None or score < (best_swap[0], best_swap[2]["cost"] - cur_cost):
-                                    best_swap = (len(trial_plates), i, alt)
+                                cand = (len(trial_plates), price, i, alt)
+                                if best_swap is None or cand[:2] < best_swap[:2]:
+                                    best_swap = cand
                     if best_swap is None:
                         break
-                    _n, i, alt = best_swap
+                    _n, _price, i, alt = best_swap
                     oriented[i]["swap"] = alt
                     rects, placements, plates, fits = pack_current()
 
