@@ -76,20 +76,56 @@ def _hint_penalty(hints: list[dict], r: Any) -> float:
     return pen
 
 
+# Ground-truth probe cache: (mesh sha1, orientation label, settings signature) →
+# the real slicer's {minutes, support_g, …}. Content-addressed, so re-planning
+# the same part at the same orientation never re-slices.
+_PROBE_CACHE: dict[tuple[str, str, tuple], dict] = {}
+_PROBE_KEEP = 3  # how many top candidates get a real slice
+_PROBE_TIMEOUT_S = 150
+
+
+def _mesh_sha(verts: Any, tris: Any) -> str:
+    import hashlib
+
+    import numpy as np
+
+    return hashlib.sha1(np.round(np.asarray(verts, dtype=float), 2).tobytes() + np.asarray(tris).tobytes()).hexdigest()
+
+
+def _probe_one(
+    obj: Any, axis: Any, angle: float, bed: tuple[float, float], settings: dict, timeout_s: int = _PROBE_TIMEOUT_S
+) -> dict | None:
+    """Really slice ONE part at ONE orientation and return the slicer's numbers."""
+    import numpy as np
+    from build123d import Axis, Pos
+
+    from app.kernel.slicer import slice_minutes
+
+    oriented = obj.rotate(Axis((0, 0, 0), tuple(np.asarray(axis, dtype=float))), angle) if angle else obj
+    bb = oriented.bounding_box()
+    oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
+    return slice_minutes([oriented], bed=bed, timeout_s=timeout_s, settings=settings)
+
+
 def _orient(
     obj: Any,
     strategy: str = "material",
     supports: bool = True,
     hints: list[dict] | None = None,
     force: str | None = None,
-) -> tuple[Any, str, float, float, tuple[Any, Any], Any]:
+    probe: dict | None = None,
+) -> tuple[Any, str, float, float, tuple[Any, Any], Any, dict]:
     """Pick the best orientation for the strategy. Phase 1: ~48 candidate down
     directions scored on removability-weighted support cost (+ height/footprint)
     — support trapped inside a bore/pocket is penalized up to 10×, so "print it
     upside-down with external supports" wins on the shapes where a human would
-    choose that. Phase 2: layer-slice the best few for real minutes. Returns
-    (rotated + bed-dropped solid, label, support area, est minutes, oriented mesh
-    (verts, tris), profile)."""
+    choose that. Phase 2: layer-slice the best few for real minutes. Phase 3
+    (opt-in, `probe={"bed", "settings"}`): the heuristic only FILTERS — the top
+    few survivors are sliced by the REAL slicer (Orca tree supports and all) and
+    re-ranked by actual support grams × our removability ratio + real minutes.
+    Returns (rotated + bed-dropped solid, label, support area, est minutes,
+    oriented mesh (verts, tris), profile, extra) — extra carries the Pareto set
+    of runner-up orientations (for swap-to-fit packing) and the probe numbers."""
     import numpy as np
     from build123d import Axis, Pos
 
@@ -134,7 +170,7 @@ def _orient(
     phase1.sort(key=lambda p: p[0])
 
     # Phase 2 — real layer-sliced estimate for the survivors; strategy picks.
-    best: tuple[tuple[float, ...], str, Any, Any, float, float, Any] | None = None
+    scored: list[tuple[tuple[float, ...], str, Any, Any, float, float, Any, float, float]] = []
     for (_pen_key, _cost_key, _h, fp), label, axis, angle, cost, pen, v in phase1[:_PHASE2_KEEP]:
         minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
         sup = support_area(v, tris)
@@ -145,16 +181,87 @@ def _orient(
             key = (pen_r, minutes, cost, fp)
         else:  # material — removability-weighted support first
             key = (pen_r, cost, minutes, fp)
-        if best is None or key < best[0]:
-            best = (key, label, axis, angle, sup, minutes, v)
-    assert best is not None
-    _key, label, axis, angle, sup, minutes, best_v = best
+        scored.append((key, label, axis, angle, sup, minutes, v, cost, pen_r))
+    scored.sort(key=lambda s: s[0])
+
+    # Phase 3 — ground truth. Slice the top candidates for REAL and re-rank on
+    # actual support grams (weighted by our removability ratio — the slicer
+    # can't know a support is trapped in a bore) + real minutes.
+    probe_info: dict | None = None
+    if probe and scored:
+        sig = tuple(sorted((k, str(v_)) for k, v_ in (probe.get("settings") or {}).items()))
+        sha = _mesh_sha(verts, tris)
+        seen_labels: set[str] = set()
+        probed: list[tuple[tuple[float, ...], int, dict]] = []
+        for i, (_key, label, axis, angle, sup, _minutes, v, cost, pen_r) in enumerate(scored[:_PROBE_KEEP]):
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            ck = (sha, label, sig)
+            res = _PROBE_CACHE.get(ck)
+            if res is None:
+                res = _probe_one(obj, axis, angle, probe["bed"], probe.get("settings") or {})
+                if res is not None:
+                    _PROBE_CACHE[ck] = res
+            if res is None:
+                continue  # slicer failed on this one — heuristic rank stands for it
+            ratio = min(max(cost / max(sup, 1.0), 1.0), 10.0)  # removability multiplier
+            g = float(res.get("support_g") or 0.0)
+            m = float(res.get("minutes") or 0.0)
+            fp = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
+            if strategy == "plates":
+                pkey = (pen_r, round(fp, 1), round(g * ratio, 2), m)
+            elif strategy == "fastest":
+                pkey = (pen_r, m, round(g * ratio, 2), round(fp, 1))
+            else:
+                pkey = (pen_r, round(g * ratio, 2), m, round(fp, 1))
+            probed.append((pkey, i, res))
+        if probed:
+            probed.sort(key=lambda p: p[0])
+            _pk, best_i, res = probed[0]
+            scored.insert(0, scored.pop(best_i))
+            probe_info = {
+                "support_g": res.get("support_g"),
+                "model_g": res.get("model_g"),
+                "minutes": res.get("minutes"),
+                "slicer": res.get("slicer"),
+                "candidates": len(probed),
+            }
+
+    _key, label, axis, angle, sup, minutes, best_v, _cost, _pen = scored[0]
+
+    # Pareto set of runner-ups on (footprint area, support cost) — packing can
+    # swap to one of these when a smaller footprint saves a whole plate.
+    alts: list[dict] = []
+    for _k, alabel, aaxis, aangle, asup, amin, av, acost, apen in scored:
+        w = float(av[:, 0].max() - av[:, 0].min())
+        d = float(av[:, 1].max() - av[:, 1].min())
+        area = w * d
+        dominated = any(
+            (o["w"] * o["d"] <= area and o["cost"] <= acost and (o["w"] * o["d"], o["cost"]) != (area, acost))
+            for o in alts
+        )
+        if not dominated:
+            alts.append(
+                {
+                    "label": alabel,
+                    "axis": tuple(np.asarray(aaxis, dtype=float)),
+                    "angle": float(aangle),
+                    "w": w,
+                    "d": d,
+                    "cost": float(acost),
+                    "sup": float(asup),
+                    "minutes": float(amin),
+                    "pen": float(apen),
+                }
+            )
 
     oriented = obj.rotate(Axis((0, 0, 0), tuple(np.asarray(axis, dtype=float))), angle) if angle else obj
     bb = oriented.bounding_box()
     # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
-    return oriented, label, sup, minutes, (best_v, tris), prof
+    extra = {"alts": alts, "probe": probe_info, "verts": verts, "tris": tris}
+    return oriented, label, sup, minutes, (best_v, tris), prof, extra
 
 
 def _build_part(project: str | None, name: str) -> Any:
@@ -292,12 +399,42 @@ def print_candidates(project: str | None) -> list[dict]:
     return out
 
 
+def _alt_solid_mesh(base: Any, verts: Any, tris: Any, alt: dict) -> tuple[Any, tuple[Any, Any]]:
+    """Materialize an alternate orientation: rotated + bed-dropped solid and the
+    matching oriented mesh (for plate-time aggregation)."""
+    import numpy as np
+    from build123d import Axis, Pos
+
+    axis, angle = alt["axis"], alt["angle"]
+    solid = base.rotate(Axis((0, 0, 0), tuple(axis)), angle) if angle else base
+    bb = solid.bounding_box()
+    solid = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * solid
+    # Rodrigues: rotate the mesh the same way the solid was rotated.
+    a = np.asarray(axis, dtype=float)
+    n = np.linalg.norm(a) or 1.0
+    ux, uy, uz = a / n
+    t = np.radians(angle)
+    c, s = np.cos(t), np.sin(t)
+    r = np.array(
+        [
+            [c + ux * ux * (1 - c), ux * uy * (1 - c) - uz * s, ux * uz * (1 - c) + uy * s],
+            [uy * ux * (1 - c) + uz * s, c + uy * uy * (1 - c), uy * uz * (1 - c) - ux * s],
+            [uz * ux * (1 - c) - uy * s, uz * uy * (1 - c) + ux * s, c + uz * uz * (1 - c)],
+        ]
+    )
+    v = verts @ r.T
+    v = v - [0.0, 0.0, float(v[:, 2].min())]
+    return solid, (v, tris)
+
+
 def plan_print(
     items: list[dict],
     bed: tuple[float, float] = DEFAULT_BED,
     want_objects: bool = False,
     strategy: str = "material",
     supports: bool = True,
+    probe: bool = False,
+    slice_settings: dict | None = None,
 ) -> dict:
     """items: [{project?: str, name: str, qty: int}] → the arranged plate(s).
 
@@ -305,6 +442,10 @@ def plan_print(
     material, smallest footprints (fewest plates), or shortest parts (fastest).
     `supports` toggles support material (auto-placed where overhangs need it) —
     it drops the support time from the estimate and, downstream, from the slice.
+    `probe` (needs a slicer): ground-truth the orientation choice — the heuristic
+    only shortlists, the REAL slicer (tree supports and all) ranks the finalists
+    by actual support grams and minutes. After packing, a swap-to-fit pass tries
+    each part's Pareto runner-up orientations when that saves a whole plate.
     Returns {ok, shapes, states, bbox, stats, fits, plates} (plus the raw located
     objects under "_objects"/"_plate_of" when want_objects, for export)."""
     import shutil
@@ -330,6 +471,12 @@ def plan_print(
     if not wanted:
         return {"ok": False, "error": "pick at least one part (qty ≥ 1)"}
 
+    probe_ctx = None
+    if probe and _has_slicer():
+        st = dict(slice_settings or {})
+        st["supports"] = supports
+        probe_ctx = {"bed": bed, "settings": st}
+
     needs_projects = any(p for p, _n, _q, _o in wanted)
     tmp = Path(tempfile.mkdtemp(prefix="cadprint_")) if needs_projects else None
 
@@ -341,8 +488,8 @@ def plan_print(
                 added = str(tmp)
                 sys.path.insert(0, added)
 
-            # (label, solid, orientation, support, per-part est minutes, qty, mesh)
-            oriented: list[tuple[str, Any, str, float, float, int, tuple[Any, Any]]] = []
+            # (label, solid, orientation, support, per-part est minutes, qty, mesh, extra)
+            oriented: list[dict] = []
             # Parts may declare specs (`require`) and PRINT INTENT (`print_hint`)
             # — bind the ambient DSL while building, and slice each part's newly
             # collected hints off the shared collector.
@@ -358,32 +505,105 @@ def plan_print(
                     except Exception as exc:  # noqa: BLE001
                         return {"ok": False, "error": f"couldn't build {name}: {type(exc).__name__}: {exc}"}
                     part_hints = all_hints[before:]
-                    solid, orientation, support, minutes, mesh, _prof = _orient(
+                    solid, orientation, support, minutes, mesh, _prof, extra = _orient(
                         base,
                         strategy if strategy in STRATEGIES else "material",
                         supports,
                         hints=part_hints,
                         force=orient_override,
+                        probe=probe_ctx,
                     )
                     oriented.append(
-                        (f"{project + '/' if project else ''}{name}", solid, orientation, support, minutes, qty, mesh)
+                        {
+                            "label": f"{project + '/' if project else ''}{name}",
+                            "solid": solid,
+                            "orientation": orientation,
+                            "support": support,
+                            "minutes": minutes,
+                            "qty": qty,
+                            "mesh": mesh,
+                            "base": base,
+                            "extra": extra,
+                            "swap": None,  # filled by swap-to-fit
+                        }
                     )
+
+            # --- pack, then try to SAVE PLATES by swapping to Pareto runner-up
+            # orientations (smaller footprint, bounded support-cost increase).
+            def part_dims(o: dict) -> tuple[float, float]:
+                if o["swap"] is not None:
+                    return o["swap"]["w"] + PADDING, o["swap"]["d"] + PADDING
+                bb = o["solid"].bounding_box()
+                return bb.max.X - bb.min.X + PADDING, bb.max.Y - bb.min.Y + PADDING
+
+            def pack_current() -> tuple[list[tuple[int, float, float]], dict, list[_Plate], bool]:
+                rects: list[tuple[int, float, float]] = []
+                for o in oriented:
+                    w, d = part_dims(o)
+                    for _ in range(o["qty"]):
+                        rects.append((len(rects), w, d))
+                placements, plates, fits = _pack_plates(rects, bed)
+                return rects, placements, plates, fits
+
+            rects, placements, plates, fits = pack_current()
+            if fits and len(plates) > 1:
+                # Greedy: each round, apply the single orientation swap that
+                # reduces the plate count the most for the least extra support.
+                # Hints (pen) are never traded away; cost may grow by at most
+                # 3× (plates strategy) / 75% + 100mm² (others).
+                limit = 3.0 if strategy == "plates" else 0.75
+                for _round in range(6):
+                    baseline = len(plates)
+                    best_swap: tuple[float, int, dict] | None = None
+                    for i, o in enumerate(oriented):
+                        cur = o["swap"] or next(
+                            (a for a in o["extra"]["alts"] if a["label"] == o["orientation"]),
+                            None,
+                        )
+                        cur_cost = cur["cost"] if cur else 0.0
+                        cur_area = (cur["w"] * cur["d"]) if cur else part_dims(o)[0] * part_dims(o)[1]
+                        cur_pen = cur["pen"] if cur else 0.0
+                        for alt in o["extra"]["alts"]:
+                            if alt is cur or alt["w"] * alt["d"] >= cur_area or alt["pen"] > cur_pen:
+                                continue
+                            incr = alt["cost"] - cur_cost
+                            if incr > cur_cost * limit + 100.0:
+                                continue
+                            prev = o["swap"]
+                            o["swap"] = alt
+                            _r, _pl, trial_plates, trial_fits = pack_current()
+                            o["swap"] = prev
+                            if trial_fits and len(trial_plates) < baseline:
+                                score = (len(trial_plates), incr)
+                                if best_swap is None or score < (best_swap[0], best_swap[2]["cost"] - cur_cost):
+                                    best_swap = (len(trial_plates), i, alt)
+                    if best_swap is None:
+                        break
+                    _n, i, alt = best_swap
+                    oriented[i]["swap"] = alt
+                    rects, placements, plates, fits = pack_current()
+
+            # Materialize swapped parts: rotate the base into the alt orientation
+            # and swap the mesh so plate times stay honest.
+            for o in oriented:
+                if o["swap"] is not None:
+                    alt = o["swap"]
+                    o["solid"], o["mesh"] = _alt_solid_mesh(o["base"], o["extra"]["verts"], o["extra"]["tris"], alt)
+                    o["orientation"] = alt["label"]
+                    o["support"] = alt["sup"]
+                    o["minutes"] = alt["minutes"]
 
             # one rect per INSTANCE (carrying the oriented mesh so a plate's time
             # can be aggregated with SHARED layer overhead, not summed per part)
-            rects: list[tuple[int, float, float]] = []
             inst: list[tuple[int, Any, str, tuple[Any, Any]]] = []  # (rect idx, solid, display name, mesh)
             counters: dict[str, int] = {}
-            for label, solid, _o, _s, _minutes, qty, mesh in oriented:
-                bb = solid.bounding_box()
-                w, d = bb.max.X - bb.min.X + PADDING, bb.max.Y - bb.min.Y + PADDING
-                for _ in range(qty):
+            idx = 0
+            for o in oriented:
+                label = o["label"]
+                for _ in range(o["qty"]):
                     counters[label] = counters.get(label, 0) + 1
-                    idx = len(rects)
-                    rects.append((idx, w, d))
-                    inst.append((idx, solid, f"{label}_{counters[label]}".replace("/", "_"), mesh))
-
-            placements, plates, fits = _pack_plates(rects, bed)
+                    inst.append((idx, o["solid"], f"{label}_{counters[label]}".replace("/", "_"), o["mesh"]))
+                    idx += 1
 
             # Lay the plates out in a row along X with a visible gap, the whole
             # row centered at the origin. Rotated instances get a free Z-spin
@@ -429,15 +649,22 @@ def plan_print(
     _SUP_MIN = 25.0  # mm² — below this, overhang is negligible (chamfers etc.)
     _SPLIT_MIN = 400.0  # mm² — even the BEST orientation is support-heavy → suggest a split
     stats = []
-    for label, _s, orientation, support, minutes, qty, mesh in oriented:
+    for o in oriented:
+        label, support, minutes, mesh = o["label"], o["support"], o["minutes"], o["mesh"]
         row: dict[str, Any] = {
             "name": label,
-            "qty": qty,
-            "orientation": orientation,
+            "qty": o["qty"],
+            "orientation": o["orientation"],
             "support_area": round(support, 1),
             "needs_support": support > _SUP_MIN,
             "est_min": round(minutes, 1),
         }
+        pinfo = o["extra"].get("probe")
+        if pinfo:
+            # ground truth from the real slicer: exact support grams + minutes
+            row["probe"] = pinfo
+        if o["swap"] is not None:
+            row["swapped_to_fit"] = True
         if support > _SPLIT_MIN:
             # No orientation escapes heavy support — the honest fix is often to
             # split into two flat-backed halves and print both cut-face down.
@@ -472,6 +699,7 @@ def plan_print(
         ],
         "slicer": _has_slicer(),
         "slicer_name": _slicer_name(),  # "orca" | "prusa" | "none"
+        "probed": bool(probe_ctx),  # orientations ground-truthed by the real slicer
     }
     if want_objects:
         result["_objects"] = objs

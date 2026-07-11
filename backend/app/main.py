@@ -609,13 +609,18 @@ async def print_calibration() -> dict:
 async def print_plan(payload: dict) -> dict:
     """Arrange parts for printing: {items: [{project?, name, qty}], bed: {w, d}}.
     Each part is auto-oriented to minimize support, instances are packed on the
-    bed, and the plate comes back as renderable geometry + per-part stats."""
+    bed, and the plate comes back as renderable geometry + per-part stats. With
+    `probe: true` (needs a slicer) orientations are ground-truthed: the real
+    slicer scores the finalists by actual support grams — slow but exact."""
     import asyncio
 
     from app.printplan import plan_print
 
     items, bed, strategy, supports = _print_args(payload)
-    return await asyncio.to_thread(plan_print, items, bed, False, strategy, supports)
+    probe = bool(payload.get("probe"))
+    return await asyncio.to_thread(
+        plan_print, items, bed, False, strategy, supports, probe, _slice_settings(payload) if probe else None
+    )
 
 
 @app.post("/print/slice")
