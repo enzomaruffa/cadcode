@@ -189,6 +189,63 @@ def _grams(text: str, cm3: float) -> float:
     return round(g if g > 0 else cm3 * _PLA_DENSITY, 2)
 
 
+# Feature markers in the G-code: PrusaSlicer emits `;TYPE:Support material`,
+# OrcaSlicer `; FEATURE: Support` (+ interface/transition variants). Anything
+# whose feature name mentions "support" counts as support extrusion.
+_FEATURE_RE = re.compile(r";\s*(?:TYPE|FEATURE)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_G1_E_RE = re.compile(r"^G1\b[^;]*?\bE(-?[\d.]+)", re.IGNORECASE)
+_G92_E_RE = re.compile(r"^G92\b[^;]*?\bE(-?[\d.]+)", re.IGNORECASE)
+_FILAMENT_MM2 = 3.14159265 * (1.75 / 2) ** 2  # filament cross-section (mm²)
+
+
+def support_stats(text: str) -> dict[str, float]:
+    """EXACT support cost from the sliced G-code: walk the toolpaths, split
+    extrusion by the slicer's own feature annotations, and convert filament
+    length → volume → grams. This is the ground truth the orientation search
+    ranks against — the slicer's real tree/organic supports, not our ray
+    heuristic. Returns {support_cm3, support_g, model_cm3, model_g}."""
+    support_mm = 0.0
+    model_mm = 0.0
+    in_support = False
+    relative = False
+    last_e = 0.0
+    for line in text.splitlines():
+        if line.startswith(";"):
+            m = _FEATURE_RE.match(line)
+            if m:
+                in_support = "support" in m.group(1).lower()
+            continue
+        if line.startswith(("G1", "g1")):
+            m = _G1_E_RE.match(line)
+            if not m:
+                continue
+            e = float(m.group(1))
+            delta = e if relative else e - last_e
+            if not relative:
+                last_e = e
+            if delta > 0:
+                if in_support:
+                    support_mm += delta
+                else:
+                    model_mm += delta
+        elif line.startswith(("M83", "m83")):
+            relative = True
+        elif line.startswith(("M82", "m82")):
+            relative = False
+        elif line.startswith(("G92", "g92")):
+            m = _G92_E_RE.match(line)
+            if m:
+                last_e = float(m.group(1))
+    s_cm3 = support_mm * _FILAMENT_MM2 / 1000.0
+    m_cm3 = model_mm * _FILAMENT_MM2 / 1000.0
+    return {
+        "support_cm3": round(s_cm3, 2),
+        "support_g": round(s_cm3 * _PLA_DENSITY, 2),
+        "model_cm3": round(m_cm3, 2),
+        "model_g": round(m_cm3 * _PLA_DENSITY, 2),
+    }
+
+
 def _slice_prusa(
     stl: Path, workdir: Path, bed: tuple[float, float], timeout_s: int, st: dict[str, Any], want_gcode: bool
 ) -> dict[str, Any] | None:
@@ -237,6 +294,7 @@ def _slice_prusa(
         "minutes": round(minutes, 1),
         "filament_cm3": cm3,
         "filament_g": _grams(text, cm3),
+        **support_stats(text),
         "_gcode": text if want_gcode else None,
         "supported": bool(supported),
         "slicer": "prusa",
@@ -584,6 +642,7 @@ def _slice_orca(
         "minutes": round(minutes, 1),
         "filament_cm3": cm3,
         "filament_g": _grams(text, cm3),
+        **support_stats(text),
         "_gcode": text if want_gcode else None,
         "supported": bool(supported),
         "slicer": "orca",
