@@ -114,6 +114,7 @@ def _orient(
     hints: list[dict] | None = None,
     force: str | None = None,
     probe: dict | None = None,
+    bed: tuple[float, float] | None = None,
 ) -> tuple[Any, str, float, float, tuple[Any, Any], Any, dict]:
     """Pick the best orientation for the strategy. Phase 1: ~48 candidate down
     directions scored on removability-weighted support cost (+ height/footprint)
@@ -153,9 +154,10 @@ def _orient(
         if forced:
             candidates = forced
 
-    # Phase 1 — cheap metrics for every candidate. Declared print intent
-    # (print_hint flow/cosmetic) outranks everything: it leads the sort key.
-    phase1: list[tuple[tuple[float, float, float, float], str, Any, Any, float, float, Any]] = []
+    # Phase 1 — cheap metrics for every candidate. BED FIT leads the sort key
+    # (an orientation that can't go on the printer loses to any that can), then
+    # declared print intent (print_hint flow/cosmetic) outranks the strategy.
+    phase1: list[tuple[tuple[float, ...], str, Any, Any, float, float, Any]] = []
     for label, d in candidates:
         r, axis, angle = rotation_to_down(d)
         vr = verts @ r.T
@@ -163,24 +165,38 @@ def _orient(
         pen = _hint_penalty(hints or [], r)
         v = vr - [0.0, 0.0, float(vr[:, 2].min())]  # dropped onto the bed for the size metrics
         height = float(v[:, 2].max())
-        footprint = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
+        w = float(v[:, 0].max() - v[:, 0].min())
+        dd = float(v[:, 1].max() - v[:, 1].min())
+        footprint = w * dd
+        unfit = 0
+        if bed is not None:
+            bw, bd = bed[0] - PADDING, bed[1] - PADDING
+            unfit = 0 if ((w <= bw and dd <= bd) or (dd <= bw and w <= bd)) else 1
         phase1.append(
-            ((round(pen, 1), round(cost, 1), round(height, 1), round(footprint, 1)), label, axis, angle, cost, pen, v)
+            (
+                (unfit, round(pen, 1), round(cost, 1), round(height, 1), round(footprint, 1)),
+                label,
+                axis,
+                angle,
+                cost,
+                pen,
+                v,
+            )
         )
     phase1.sort(key=lambda p: p[0])
 
     # Phase 2 — real layer-sliced estimate for the survivors; strategy picks.
     scored: list[tuple[tuple[float, ...], str, Any, Any, float, float, Any, float, float]] = []
-    for (_pen_key, _cost_key, _h, fp), label, axis, angle, cost, pen, v in phase1[:_PHASE2_KEEP]:
+    for (unfit, _pen_key, _cost_key, _h, fp), label, axis, angle, cost, pen, v in phase1[:_PHASE2_KEEP]:
         minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
         sup = support_area(v, tris)
         pen_r = round(pen, 1)
         if strategy == "plates":
-            key = (pen_r, fp, cost, minutes)
+            key = (unfit, pen_r, fp, cost, minutes)
         elif strategy == "fastest":
-            key = (pen_r, minutes, cost, fp)
+            key = (unfit, pen_r, minutes, cost, fp)
         else:  # material — removability-weighted support first
-            key = (pen_r, cost, minutes, fp)
+            key = (unfit, pen_r, cost, minutes, fp)
         scored.append((key, label, axis, angle, sup, minutes, v, cost, pen_r))
     scored.sort(key=lambda s: s[0])
 
@@ -209,12 +225,13 @@ def _orient(
             g = float(res.get("support_g") or 0.0)
             m = float(res.get("minutes") or 0.0)
             fp = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
+            unfit = _key[0]
             if strategy == "plates":
-                pkey = (pen_r, round(fp, 1), round(g * ratio, 2), m)
+                pkey = (unfit, pen_r, round(fp, 1), round(g * ratio, 2), m)
             elif strategy == "fastest":
-                pkey = (pen_r, m, round(g * ratio, 2), round(fp, 1))
+                pkey = (unfit, pen_r, m, round(g * ratio, 2), round(fp, 1))
             else:
-                pkey = (pen_r, round(g * ratio, 2), m, round(fp, 1))
+                pkey = (unfit, pen_r, round(g * ratio, 2), m, round(fp, 1))
             probed.append((pkey, i, res))
         if probed:
             probed.sort(key=lambda p: p[0])
@@ -517,6 +534,7 @@ def plan_print(
                         hints=part_hints,
                         force=orient_override,
                         probe=probe_ctx,
+                        bed=bed,
                     )
                     oriented.append(
                         {
