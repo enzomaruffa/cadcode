@@ -2467,18 +2467,95 @@ textarea {
   border-color: var(--accent-dim);
   color: var(--accent);
 }
-.print-orient {
-  background: var(--bg-pane);
-  color: var(--text-dim);
+.print-orient-cur {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+/* Orientation gallery: every evaluated orientation, ranked, click to override. */
+.orient-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  padding: 2px 0 2px var(--sp-3);
+  text-align: left;
+}
+.orient-toggle:hover {
+  text-decoration: underline;
+}
+.orient-table {
+  margin: 2px 0 var(--sp-2) var(--sp-3);
   border: 1px solid var(--border-soft);
   border-radius: var(--r-sm);
-  font-size: var(--fs-xs);
-  padding: 1px var(--sp-1);
-  max-width: 150px;
+  overflow: hidden;
 }
-.print-orient:hover {
-  border-color: var(--accent);
+.orient-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: var(--sp-2);
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  padding: 4px var(--sp-2);
+  cursor: pointer;
+  text-align: right;
+}
+.orient-row:last-child {
+  border-bottom: none;
+}
+.orient-row .orient-name {
+  text-align: left;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.orient-row.orient-head {
+  color: var(--text-faint);
+  cursor: default;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.orient-row.orient-head .orient-name {
+  color: var(--text-faint);
+}
+.orient-row:not(.orient-head):hover {
+  background: var(--bg-elev);
+}
+.orient-row.sel {
+  background: var(--accent-bg, rgba(120, 160, 255, 0.14));
+}
+.orient-row.sel .orient-name {
+  color: var(--accent);
+}
+.orient-row.unfit {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.orient-tilt {
+  font-size: 10px;
+  color: var(--warn);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  padding: 0 3px;
+}
+.orient-tilt.bad {
+  color: var(--err);
+}
+.orient-stability {
+  color: var(--text-dim);
+}
+.orient-row.orient-auto {
+  grid-template-columns: 1fr;
+  color: var(--accent);
+  text-align: left;
 }
 .print-split-hint {
   font-size: var(--fs-xs);

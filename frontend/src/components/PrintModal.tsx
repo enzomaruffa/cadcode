@@ -8,6 +8,28 @@ interface Candidate {
   name: string;
   label: string;
 }
+// One evaluated orientation: metrics from the mesh, plus the real slicer's grams
+// & minutes when ground-truth probing was on. The backend returns the whole field
+// ranked best-first, so the UI can show WHY a pick won and let the user override.
+interface OrientCandidate {
+  label: string;
+  tilt_deg: number; // deviation from a flat-on-a-face orientation (0 = flat)
+  principal: boolean; // one of the six flat-on-a-face orientations
+  fits: boolean; // fits the bed
+  w: number;
+  d: number;
+  height: number;
+  footprint: number;
+  contact: number; // flat bed-contact area (mm²) — stability/adhesion
+  overhang: number; // overhang area needing support (mm²)
+  est_min: number | null; // instant estimate
+  support_g: number | null; // real slicer support grams (when probed)
+  model_g: number | null;
+  minutes: number | null; // real slicer minutes (when probed)
+  probed: boolean;
+  recommended: boolean;
+  hint_penalty: number; // >0 means it fights a print_hint
+}
 interface PlanStats {
   name: string;
   qty: number;
@@ -18,11 +40,9 @@ interface PlanStats {
   suggest_split?: boolean; // even the best orientation is support-heavy
   split_hint?: string; // copyable build123d split() suggestion
   probe?: { support_g?: number; model_g?: number; minutes?: number; slicer?: string; candidates?: number };
+  orientations?: OrientCandidate[]; // the whole ranked orientation field
   swapped_to_fit?: boolean; // packing swapped this part to a smaller-footprint orientation
 }
-
-// Per-part orientation override choices (must match the backend's principal labels).
-const ORIENT_CHOICES = ["auto", "as-is", "upside-down", "on side +X", "on side -X", "on side +Y", "on side -Y"];
 interface PlateInfo {
   index: number;
   w: number;
@@ -124,6 +144,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [supports, setSupports] = useState(true); // auto-add support material where overhangs need it
   const [probe, setProbe] = useState(false); // ground-truth orientations with the real slicer (slow, exact)
   const [orients, setOrients] = useState<Record<string, string>>({}); // per-part orientation override
+  const [openOrient, setOpenOrient] = useState<Record<string, boolean>>({}); // expanded orientation gallery per part
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -770,6 +791,9 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 // stats label "project/name" or "name" → the picker row key
                 const slash = s.name.indexOf("/");
                 const key = slash >= 0 ? `${s.name.slice(0, slash)}:${s.name.slice(slash + 1)}` : `:${s.name}`;
+                const forced = orients[key] && orients[key] !== "auto" ? orients[key] : null;
+                const cands = s.orientations ?? [];
+                const anyProbed = cands.some((c) => c.probed);
                 return (
                   <div className="print-stat-block" key={s.name}>
                     <div className="print-stat">
@@ -777,21 +801,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                         {s.qty}× {s.name}
                       </span>
                       <span>
-                        <select
-                          className="print-orient"
-                          value={orients[key] ?? "auto"}
-                          onChange={(e) => {
-                            setOrients((o) => ({ ...o, [key]: e.target.value }));
-                            dropSlices();
-                          }}
-                          title="Override this part's print orientation (auto = optimizer's pick)"
-                        >
-                          {ORIENT_CHOICES.map((c) => (
-                            <option key={c} value={c}>
-                              {c === "auto" ? `auto (${s.orientation})` : c}
-                            </option>
-                          ))}
-                        </select>
+                        <b className="print-orient-cur">{forced ? `${forced} (forced)` : s.orientation}</b>
                         {s.support_area === 0
                           ? " · no overhang 🎉"
                           : plan.supports === false
@@ -808,6 +818,77 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                         {s.swapped_to_fit ? " · ↻ re-oriented to save a plate" : ""}
                       </span>
                     </div>
+                    {cands.length > 1 && (
+                      <>
+                        <button
+                          className="orient-toggle"
+                          onClick={() => setOpenOrient((o) => ({ ...o, [key]: !o[key] }))}
+                          title="Compare every orientation the planner evaluated and pick one"
+                        >
+                          {openOrient[key] ? "▾" : "▸"} {cands.length} orientations{" "}
+                          {anyProbed ? "sliced for real" : "compared"} — {openOrient[key] ? "hide" : "compare & choose"}
+                        </button>
+                        {openOrient[key] && (
+                          <div className="orient-table">
+                            <div className="orient-row orient-head">
+                              <span>orientation</span>
+                              <span>support</span>
+                              <span>time</span>
+                              <span>base</span>
+                            </div>
+                            {cands.map((c) => {
+                              const selected = forced ? forced === c.label : c.recommended;
+                              const stability = c.contact >= 150 ? "▰ solid" : c.contact >= 30 ? "▪ ok" : "△ tippy";
+                              return (
+                                <button
+                                  key={c.label}
+                                  className={`orient-row${selected ? " sel" : ""}${c.fits ? "" : " unfit"}`}
+                                  disabled={!c.fits}
+                                  onClick={() => {
+                                    setOrients((o) => ({ ...o, [key]: c.label }));
+                                    dropSlices();
+                                  }}
+                                  title={`${c.w}×${c.d}×${c.height} mm${c.hint_penalty > 0 ? " · fights a print hint" : ""}${
+                                    c.fits ? "" : " · bigger than the bed"
+                                  }`}
+                                >
+                                  <span className="orient-name">
+                                    {c.recommended ? "★ " : ""}
+                                    {c.label}
+                                    {c.tilt_deg > 2 && <span className="orient-tilt">{c.tilt_deg}° tilt</span>}
+                                    {!c.fits && <span className="orient-tilt bad">too big</span>}
+                                  </span>
+                                  <span>
+                                    {c.support_g != null ? `${c.support_g} g` : `~${Math.round(c.overhang)} mm²`}
+                                  </span>
+                                  <span>
+                                    {c.minutes != null
+                                      ? fmtMin(c.minutes)
+                                      : c.est_min != null
+                                        ? `~${fmtMin(c.est_min)}`
+                                        : "—"}
+                                  </span>
+                                  <span className="orient-stability" title={`${Math.round(c.contact)} mm² bed contact`}>
+                                    {stability}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                            {forced && (
+                              <button
+                                className="orient-row orient-auto"
+                                onClick={() => {
+                                  setOrients((o) => ({ ...o, [key]: "auto" }));
+                                  dropSlices();
+                                }}
+                              >
+                                ↺ back to auto (let the planner pick)
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                     {s.suggest_split && s.split_hint && <div className="print-split-hint">✂ {s.split_hint}</div>}
                   </div>
                 );
