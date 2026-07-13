@@ -80,7 +80,16 @@ def _hint_penalty(hints: list[dict], r: Any) -> float:
 # the real slicer's {minutes, support_g, …}. Content-addressed, so re-planning
 # the same part at the same orientation never re-slices.
 _PROBE_CACHE: dict[tuple[str, str, tuple], dict] = {}
-_PROBE_KEEP = 3  # how many top candidates get a real slice
+# The six principal (flat-on-a-face) orientations. These are ALWAYS in the
+# ground-truth probe set when they fit the bed — never gated behind the cheap
+# heuristic — because "flat on a face" is what a human reaches for first, and the
+# heuristic's enclosure penalty used to bury the right one (a funnel's shallow
+# socket bores read as "trapped support" and sank the mouth-down orientation
+# below three near-identical tilts, so probing only ever compared the tilts).
+_PRINCIPALS = ("as-is", "upside-down", "on side +X", "on side -X", "on side +Y", "on side -Y")
+_HEUR_EXTRA = 4  # heuristic tilt candidates probed BEYOND the principals (teardrop holes etc.)
+_PROBE_MAX = 10  # cap on real slices per part (mesh-hash cached, so re-plans are free)
+_PROBE_WORKERS = 4  # concurrent slicer subprocesses during the orientation bake-off
 _PROBE_TIMEOUT_S = 150
 
 
@@ -107,6 +116,34 @@ def _probe_one(
     return slice_minutes([oriented], bed=bed, timeout_s=timeout_s, settings=settings)
 
 
+def _probe_fields(res: dict) -> dict:
+    """Pull the display/ranking fields out of a real slice result."""
+    return {
+        "support_g": res.get("support_g"),
+        "model_g": res.get("model_g"),
+        "minutes": res.get("minutes"),
+        "slicer": res.get("slicer"),
+        "probed": True,
+    }
+
+
+def _nearest_principal_tilt(d: Any) -> float:
+    """Angle (deg) from the nearest principal axis — 0 for a flat-on-a-face
+    orientation, larger the more tilted. Used to prefer clean flat prints and to
+    tell the UI 'this one's a weird tilt'."""
+    import math
+
+    import numpy as np
+
+    dn = np.asarray(d, dtype=float)
+    dn = dn / (np.linalg.norm(dn) or 1.0)
+    best = max(
+        float(np.clip(abs(np.dot(dn, p)), -1.0, 1.0))
+        for p in ((0, 0, -1), (0, 0, 1), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))
+    )
+    return round(math.degrees(math.acos(min(best, 1.0))), 1)
+
+
 def _orient(
     obj: Any,
     strategy: str = "material",
@@ -116,21 +153,26 @@ def _orient(
     probe: dict | None = None,
     bed: tuple[float, float] | None = None,
 ) -> tuple[Any, str, float, float, tuple[Any, Any], Any, dict]:
-    """Pick the best orientation for the strategy. Phase 1: ~48 candidate down
-    directions scored on removability-weighted support cost (+ height/footprint)
-    — support trapped inside a bore/pocket is penalized up to 10×, so "print it
-    upside-down with external supports" wins on the shapes where a human would
-    choose that. Phase 2: layer-slice the best few for real minutes. Phase 3
-    (opt-in, `probe={"bed", "settings"}`): the heuristic only FILTERS — the top
-    few survivors are sliced by the REAL slicer (Orca tree supports and all) and
-    re-ranked by actual support grams × our removability ratio + real minutes.
-    Returns (rotated + bed-dropped solid, label, support area, est minutes,
-    oriented mesh (verts, tris), profile, extra) — extra carries the Pareto set
-    of runner-up orientations (for swap-to-fit packing) and the probe numbers."""
+    """Pick the best orientation for the strategy and return the full ranked field.
+
+    Phase 1 scores ~48 candidate down-directions on cheap mesh metrics (overhang
+    area, removability-weighted support cost, height, footprint, BED-CONTACT area
+    for stability). Phase 2 layer-slices a shortlist for instant minutes. Phase 3
+    (opt-in `probe={"bed","settings"}`) really slices — IN PARALLEL — every
+    bed-fitting PRINCIPAL orientation plus the top heuristic tilts, and ranks by
+    the slicer's ACTUAL support grams / minutes with a bed-contact stability
+    tiebreak. Crucially the principals are always probed, never gated behind the
+    heuristic, so the mouth-down/flat orientation can't be silently dropped.
+
+    Returns (rotated+dropped solid, label, overhang area, est minutes, oriented
+    mesh, profile, extra). `extra["candidates"]` is the whole ranked field with
+    per-orientation metrics (for the UI); `extra["alts"]` is the Pareto set for
+    swap-to-fit packing; `extra["probe"]` is the winner's real numbers."""
     import numpy as np
     from build123d import Axis, Pos
 
     from app.kernel.print_time import (
+        bed_contact_area,
         build_occupancy,
         candidate_down_dirs,
         estimate_minutes,
@@ -140,120 +182,183 @@ def _orient(
         support_cost,
     )
 
-    # Supportless prints don't extrude support material — zero its density so the
-    # time estimate drops the support term (overhang area is still measured for
-    # ranking + display: less overhang prints cleaner either way).
     prof = None if supports else {"support_density": 0.0}
     verts, tris = mesh_of(obj)
     occ = build_occupancy(verts, tris)
 
-    # Candidates: the full sweep, or just the user's forced orientation.
     candidates = candidate_down_dirs()
     if force and force != "auto":
         forced = [c for c in candidates if c[0] == force]
         if forced:
             candidates = forced
 
-    # Phase 1 — cheap metrics for every candidate. BED FIT leads the sort key
-    # (an orientation that can't go on the printer loses to any that can), then
-    # declared print intent (print_hint flow/cosmetic) outranks the strategy.
-    phase1: list[tuple[tuple[float, ...], str, Any, Any, float, float, Any]] = []
-    for label, d in candidates:
-        r, axis, angle = rotation_to_down(d)
+    # Phase 1 — cheap metrics for every candidate.
+    metas: list[dict] = []
+    for label, dvec in candidates:
+        r, axis, angle = rotation_to_down(dvec)
         vr = verts @ r.T
-        cost = support_cost(vr, tris, occ, r)  # rotated-only (support_cost maps rays back to the grid)
+        cost = support_cost(vr, tris, occ, r)
         pen = _hint_penalty(hints or [], r)
-        v = vr - [0.0, 0.0, float(vr[:, 2].min())]  # dropped onto the bed for the size metrics
+        v = vr - [0.0, 0.0, float(vr[:, 2].min())]
         height = float(v[:, 2].max())
         w = float(v[:, 0].max() - v[:, 0].min())
-        dd = float(v[:, 1].max() - v[:, 1].min())
-        footprint = w * dd
+        d = float(v[:, 1].max() - v[:, 1].min())
+        area_overhang = support_area(v, tris)
+        contact = bed_contact_area(v, tris)
+        tilt = _nearest_principal_tilt(dvec)
         unfit = 0
         if bed is not None:
             bw, bd = bed[0] - PADDING, bed[1] - PADDING
-            unfit = 0 if ((w <= bw and dd <= bd) or (dd <= bw and w <= bd)) else 1
-        phase1.append(
-            (
-                (unfit, round(pen, 1), round(cost, 1), round(height, 1), round(footprint, 1)),
-                label,
-                axis,
-                angle,
-                cost,
-                pen,
-                v,
-            )
-        )
-    phase1.sort(key=lambda p: p[0])
-
-    # Phase 2 — real layer-sliced estimate for the survivors; strategy picks.
-    scored: list[tuple[tuple[float, ...], str, Any, Any, float, float, Any, float, float]] = []
-    for (unfit, _pen_key, _cost_key, _h, fp), label, axis, angle, cost, pen, v in phase1[:_PHASE2_KEEP]:
-        minutes = estimate_minutes(v, tris, profile=prof)["minutes"]
-        sup = support_area(v, tris)
-        pen_r = round(pen, 1)
-        if strategy == "plates":
-            key = (unfit, pen_r, fp, cost, minutes)
-        elif strategy == "fastest":
-            key = (unfit, pen_r, minutes, cost, fp)
-        else:  # material — removability-weighted support first
-            key = (unfit, pen_r, cost, minutes, fp)
-        scored.append((key, label, axis, angle, sup, minutes, v, cost, pen_r))
-    scored.sort(key=lambda s: s[0])
-
-    # Phase 3 — ground truth. Slice the top candidates for REAL and re-rank on
-    # actual support grams (weighted by our removability ratio — the slicer
-    # can't know a support is trapped in a bore) + real minutes.
-    probe_info: dict | None = None
-    if probe and scored:
-        sig = tuple(sorted((k, str(v_)) for k, v_ in (probe.get("settings") or {}).items()))
-        sha = _mesh_sha(verts, tris)
-        seen_labels: set[str] = set()
-        probed: list[tuple[tuple[float, ...], int, dict]] = []
-        for i, (_key, label, axis, angle, sup, _minutes, v, cost, pen_r) in enumerate(scored[:_PROBE_KEEP]):
-            if label in seen_labels:
-                continue
-            seen_labels.add(label)
-            ck = (sha, label, sig)
-            res = _PROBE_CACHE.get(ck)
-            if res is None:
-                res = _probe_one(obj, axis, angle, probe["bed"], probe.get("settings") or {})
-                if res is not None:
-                    _PROBE_CACHE[ck] = res
-            if res is None:
-                continue  # slicer failed on this one — heuristic rank stands for it
-            ratio = min(max(cost / max(sup, 1.0), 1.0), 10.0)  # removability multiplier
-            g = float(res.get("support_g") or 0.0)
-            m = float(res.get("minutes") or 0.0)
-            fp = float((v[:, 0].max() - v[:, 0].min()) * (v[:, 1].max() - v[:, 1].min()))
-            unfit = _key[0]
-            if strategy == "plates":
-                pkey = (unfit, pen_r, round(fp, 1), round(g * ratio, 2), m)
-            elif strategy == "fastest":
-                pkey = (unfit, pen_r, m, round(g * ratio, 2), round(fp, 1))
-            else:
-                pkey = (unfit, pen_r, round(g * ratio, 2), m, round(fp, 1))
-            probed.append((pkey, i, res))
-        if probed:
-            probed.sort(key=lambda p: p[0])
-            _pk, best_i, res = probed[0]
-            scored.insert(0, scored.pop(best_i))
-            probe_info = {
-                "support_g": res.get("support_g"),
-                "model_g": res.get("model_g"),
-                "minutes": res.get("minutes"),
-                "slicer": res.get("slicer"),
-                "candidates": len(probed),
+            unfit = 0 if ((w <= bw and d <= bd) or (d <= bw and w <= bd)) else 1
+        metas.append(
+            {
+                "label": label,
+                "axis": tuple(np.asarray(axis, dtype=float)),
+                "angle": float(angle),
+                "v": v,
+                "cost": float(cost),
+                "pen": round(float(pen), 1),
+                "height": height,
+                "w": w,
+                "d": d,
+                "footprint": w * d,
+                "overhang": float(area_overhang),
+                "contact": float(contact),
+                "tilt": tilt,
+                "unfit": unfit,
+                "principal": label in _PRINCIPALS,
+                "est_min": None,
+                "support_g": None,
+                "model_g": None,
+                "minutes": None,
+                "probed": False,
             }
+        )
 
-    _key, label, axis, angle, sup, minutes, best_v, _cost, _pen = scored[0]
+    # Tippiness penalty: a part balanced on a tiny contact patch is a bad print
+    # however little support it needs. Expressed in the same units as the metric
+    # it's added to, so it nudges without dominating a real difference.
+    _CONTACT_OK = 120.0  # mm² of flat bed contact considered "solidly planted"
 
-    # Pareto set of runner-ups on (footprint area, support cost) — packing can
-    # swap to one of these when a smaller footprint saves a whole plate.
+    def tippy(m: dict) -> float:
+        return max(0.0, _CONTACT_OK - float(m["contact"]))
+
+    # Cheap heuristic support score used when we CAN'T slice: raw overhang area is
+    # the honest predictor (the enclosure penalty over-counts a shallow bore and
+    # used to bury the flat orientation), so it leads; enclosure is only a mild
+    # tiebreak, and tippiness is penalized so weird tilts don't sneak in.
+    def heur(m: dict) -> float:
+        return float(m["overhang"]) + 1.5 * tippy(m) + 0.15 * max(0.0, float(m["cost"]) - float(m["overhang"]))
+
+    # The evaluation set: EVERY bed-fitting principal (always — this is the fix)
+    # plus the best heuristic tilts, deduped by resulting placement, capped.
+    def sig(m: dict) -> tuple:
+        return (round(m["height"]), round(m["w"]), round(m["d"]), round(m["contact"] / 5) * 5)
+
+    fitting = [m for m in metas if m["unfit"] == 0] or metas
+    principals = [m for m in fitting if m["principal"]]
+    tilts = sorted((m for m in fitting if not m["principal"]), key=lambda m: (m["pen"], heur(m), m["height"]))
+    eval_set: list[dict] = []
+    seen_sig: set[tuple] = set()
+    for m in principals + tilts:
+        s = sig(m)
+        if s in seen_sig:
+            continue
+        seen_sig.add(s)
+        eval_set.append(m)
+        if len(eval_set) >= _PROBE_MAX and sum(not x["principal"] for x in eval_set) >= _HEUR_EXTRA:
+            break
+    # keep principals + up to _HEUR_EXTRA tilts
+    keep_tilts = 0
+    trimmed: list[dict] = []
+    for m in eval_set:
+        if not m["principal"]:
+            if keep_tilts >= _HEUR_EXTRA:
+                continue
+            keep_tilts += 1
+        trimmed.append(m)
+    eval_set = trimmed[:_PROBE_MAX]
+
+    # Phase 2 — instant layer-sliced minutes for the eval set.
+    for m in eval_set:
+        m["est_min"] = estimate_minutes(m["v"], tris, profile=prof)["minutes"]
+
+    # Phase 3 — ground truth. Really slice the WHOLE eval set in parallel; cache
+    # by mesh hash + orientation + settings so re-plans never re-slice.
+    probe_info: dict | None = None
+    if probe and eval_set:
+        import concurrent.futures as _cf
+
+        sig_settings = tuple(sorted((k, str(v_)) for k, v_ in (probe.get("settings") or {}).items()))
+        sha = _mesh_sha(verts, tris)
+        todo: list[dict] = []
+        for m in eval_set:
+            ck = (sha, m["label"], sig_settings)
+            cached = _PROBE_CACHE.get(ck)
+            if cached is not None:
+                m.update(_probe_fields(cached))
+            else:
+                todo.append(m)
+        if todo:
+            with _cf.ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(todo))) as ex:
+                futs = {
+                    ex.submit(_probe_one, obj, m["axis"], m["angle"], probe["bed"], probe.get("settings") or {}): m
+                    for m in todo
+                }
+                for fut in _cf.as_completed(futs):
+                    m = futs[fut]
+                    try:
+                        res = fut.result()
+                    except Exception:  # noqa: BLE001 — a slicer failure just leaves this one un-probed
+                        res = None
+                    if res is not None:
+                        _PROBE_CACHE[(sha, m["label"], sig_settings)] = res
+                        m.update(_probe_fields(res))
+        n_probed = sum(1 for m in eval_set if m["probed"])
+        if n_probed:
+            probe_info = {"candidates": n_probed}
+
+    # --- rank the eval set in the strategy's currency ---------------------------
+    # bed-fit and declared print intent (hints) always lead. Then the strategy
+    # metric, using REAL slicer numbers where we have them. Bed-contact area
+    # (bigger = more stable) and low tilt break ties toward the flat print a human
+    # would pick — so a support-heavy weird tilt never wins on a coin-flip.
+    def rank_key(m: dict) -> tuple:
+        stable = (-round(float(m["contact"])), round(float(m["tilt"])))  # more contact, less tilt = better
+        if m["probed"]:
+            # real support grams, plus a small gram-equivalent tippiness nudge so a
+            # marginally-lighter but tippy tilt can't beat a solidly flat print.
+            sup_metric = round(float(m["support_g"] or 0.0) + 0.04 * tippy(m), 1)
+            time_metric = round(float(m["minutes"] or 0.0), 1)
+        else:
+            sup_metric = round(heur(m), 1)  # heur already folds in tippiness
+            time_metric = round(float(m["est_min"] or 0.0), 1)
+        if strategy == "plates":
+            return (m["unfit"], m["pen"], round(float(m["footprint"]), 1), sup_metric, *stable, time_metric)
+        if strategy == "fastest":
+            return (m["unfit"], m["pen"], time_metric, sup_metric, *stable)
+        return (m["unfit"], m["pen"], sup_metric, *stable, time_metric)  # material
+
+    eval_set.sort(key=rank_key)
+    best = eval_set[0]
+    best["recommended"] = True
+    label, axis, angle = best["label"], best["axis"], best["angle"]
+    sup, minutes, best_v = best["overhang"], (best["minutes"] or best["est_min"] or 0.0), best["v"]
+    if best["probed"]:
+        probe_info = {
+            "support_g": best.get("support_g"),
+            "model_g": best.get("model_g"),
+            "minutes": best.get("minutes"),
+            "slicer": best.get("slicer"),
+            "candidates": (probe_info or {}).get("candidates", 1),
+        }
+
+    # Pareto set of runner-ups on (footprint, support) for swap-to-fit packing.
     alts: list[dict] = []
-    for _k, alabel, aaxis, aangle, asup, amin, av, acost, apen in scored:
-        w = float(av[:, 0].max() - av[:, 0].min())
-        d = float(av[:, 1].max() - av[:, 1].min())
-        area = w * d
+    for m in eval_set:
+        area = m["footprint"]
+        acost = m["cost"]
+        amin = m["minutes"] or m["est_min"] or 0.0
         dominated = any(
             (
                 o["w"] * o["d"] <= area
@@ -266,23 +371,46 @@ def _orient(
         if not dominated:
             alts.append(
                 {
-                    "label": alabel,
-                    "axis": tuple(np.asarray(aaxis, dtype=float)),
-                    "angle": float(aangle),
-                    "w": w,
-                    "d": d,
-                    "cost": float(acost),
-                    "sup": float(asup),
-                    "minutes": float(amin),
-                    "pen": float(apen),
+                    "label": m["label"],
+                    "axis": m["axis"],
+                    "angle": m["angle"],
+                    "w": m["w"],
+                    "d": m["d"],
+                    "cost": acost,
+                    "sup": m["overhang"],
+                    "minutes": amin,
+                    "pen": float(m["pen"]),
                 }
             )
 
+    # A compact per-orientation record for the UI (the whole ranked field).
+    candidates_out = [
+        {
+            "label": m["label"],
+            "tilt_deg": m["tilt"],
+            "principal": m["principal"],
+            "fits": m["unfit"] == 0,
+            "w": round(m["w"], 1),
+            "d": round(m["d"], 1),
+            "height": round(m["height"], 1),
+            "footprint": round(m["footprint"], 1),
+            "contact": round(m["contact"], 1),
+            "overhang": round(m["overhang"], 1),
+            "est_min": round(m["est_min"], 1) if m["est_min"] is not None else None,
+            "support_g": m["support_g"],
+            "model_g": m["model_g"],
+            "minutes": m["minutes"],
+            "probed": m["probed"],
+            "recommended": bool(m.get("recommended")),
+            "hint_penalty": m["pen"],
+        }
+        for m in eval_set
+    ]
+
     oriented = obj.rotate(Axis((0, 0, 0), tuple(np.asarray(axis, dtype=float))), angle) if angle else obj
     bb = oriented.bounding_box()
-    # drop onto the bed and center the footprint at its own origin
     oriented = Pos(-(bb.min.X + bb.max.X) / 2, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * oriented
-    extra = {"alts": alts, "probe": probe_info, "verts": verts, "tris": tris}
+    extra = {"alts": alts, "probe": probe_info, "candidates": candidates_out, "verts": verts, "tris": tris}
     return oriented, label, sup, minutes, (best_v, tris), prof, extra
 
 
@@ -698,6 +826,11 @@ def plan_print(
         if pinfo:
             # ground truth from the real slicer: exact support grams + minutes
             row["probe"] = pinfo
+        # The whole ranked orientation field (metrics per candidate) — powers the
+        # UI's orientation picker so the choice is transparent and overridable.
+        cands = o["extra"].get("candidates")
+        if cands:
+            row["orientations"] = cands
         if o["swap"] is not None:
             row["swapped_to_fit"] = True
         if support > _SPLIT_MIN:

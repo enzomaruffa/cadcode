@@ -253,6 +253,18 @@ def support_area(verts: np.ndarray, tris: np.ndarray) -> float:
     return float(areas[_overhang_mask(normals, centroids, float(verts[:, 2].min()))].sum())
 
 
+def bed_contact_area(verts: np.ndarray, tris: np.ndarray, tol: float = 0.4) -> float:
+    """Flat area actually touching the bed (mm²) — a downward-facing face sitting
+    within `tol` of the lowest point. This is the real adhesion/stability proxy:
+    a big flat base is solid; a part balanced on a tiny tip or an edge has almost
+    none, which is exactly the tippy orientation a human rejects on sight."""
+    areas, normals, centroids = _tri_geometry(verts, tris)
+    zmin = float(verts[:, 2].min())
+    on_bed = (centroids[:, 2] - zmin) <= tol
+    flat_down = normals[:, 2] < -0.966  # within ~15° of straight down
+    return float(areas[on_bed & flat_down].sum())
+
+
 def _support_volume(verts: np.ndarray, tris: np.ndarray, density: float) -> float:
     """Sparse support material volume: each overhang triangle needs a column of
     lattice from it down to the bed — so cost ∝ (horizontal area × drop height).
