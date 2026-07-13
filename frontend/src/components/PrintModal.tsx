@@ -194,6 +194,10 @@ function PlatePreview({ plate }: { plate: PlateInfo }) {
       {items.map((it, i) => {
         const x = it.cx - it.w / 2;
         const y = bd - (it.cy + it.d / 2); // flip Y for screen coords
+        // Only label a footprint big enough to hold text without colliding with
+        // its neighbours; tiny parts just show their rect.
+        const label = shortName(it.name);
+        const showLabel = it.w > fs * label.length * 0.62 && it.d > fs * 1.4;
         return (
           <g key={i}>
             <rect
@@ -206,9 +210,18 @@ function PlatePreview({ plate }: { plate: PlateInfo }) {
               style={it.color ? { fill: it.color } : undefined}
               strokeWidth={sw * 2}
             />
-            <text x={it.cx} y={bd - it.cy} fontSize={fs} className="plate-label" textAnchor="middle">
-              {shortName(it.name)}
-            </text>
+            {showLabel && (
+              <text
+                x={it.cx}
+                y={bd - it.cy}
+                fontSize={fs}
+                className="plate-label"
+                textAnchor="middle"
+                dominantBaseline="central"
+              >
+                {label}
+              </text>
+            )}
           </g>
         );
       })}
