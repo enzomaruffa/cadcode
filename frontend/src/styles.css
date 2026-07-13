@@ -2342,10 +2342,40 @@ textarea {
 .print-row:last-child {
   border-bottom: none;
 }
+.print-row.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 .print-name {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--text);
+}
+/* Shaded iso thumbnails (inline SVG) for picker rows + orientation gallery. */
+.part-thumb {
+  display: block;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: var(--r-sm);
+  background: var(--bg-pane);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.part-thumb svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.part-thumb.loading {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--bg-pane),
+    var(--bg-pane) 6px,
+    var(--bg-elev) 6px,
+    var(--bg-elev) 12px
+  );
 }
 .print-qty {
   display: flex;
@@ -2492,7 +2522,7 @@ textarea {
 }
 .orient-row {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 40px 1fr auto auto auto;
   gap: var(--sp-2);
   align-items: center;
   width: 100%;
@@ -2505,6 +2535,31 @@ textarea {
   padding: 4px var(--sp-2);
   cursor: pointer;
   text-align: right;
+}
+.orient-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-sm);
+  background: var(--bg-pane);
+  overflow: hidden;
+}
+.orient-thumb svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.orient-thumb.loading {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--bg-pane),
+    var(--bg-pane) 5px,
+    var(--bg-elev) 5px,
+    var(--bg-elev) 10px
+  );
+}
+.orient-row.orient-head .orient-thumb,
+.orient-row.orient-head span:first-child {
+  background: none;
 }
 .orient-row:last-child {
   border-bottom: none;
@@ -2556,6 +2611,45 @@ textarea {
   grid-template-columns: 1fr;
   color: var(--accent);
   text-align: left;
+}
+/* Top-down plate previews. */
+.plate-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.plate-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: var(--sp-2);
+  background: var(--bg-pane);
+}
+.plate-svg {
+  display: block;
+  width: 180px;
+  height: 180px;
+}
+.plate-bed {
+  fill: var(--bg-elev);
+  stroke: var(--border);
+}
+.plate-part {
+  fill: color-mix(in srgb, var(--accent) 45%, var(--bg-pane));
+  stroke: var(--accent);
+  opacity: 0.9;
+}
+.plate-label {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  opacity: 0.85;
+}
+.plate-cap {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  text-align: center;
 }
 .print-split-hint {
   font-size: var(--fs-xs);

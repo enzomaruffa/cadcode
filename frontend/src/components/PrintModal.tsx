@@ -43,6 +43,16 @@ interface PlanStats {
   orientations?: OrientCandidate[]; // the whole ranked orientation field
   swapped_to_fit?: boolean; // packing swapped this part to a smaller-footprint orientation
 }
+// One part's footprint on a plate (bed-local mm), for the top-down preview.
+interface LayoutItem {
+  name: string;
+  cx: number;
+  cy: number;
+  w: number;
+  d: number;
+  rotated: boolean;
+  color?: string | null;
+}
 interface PlateInfo {
   index: number;
   w: number;
@@ -50,6 +60,7 @@ interface PlateInfo {
   bed_w: number;
   bed_d: number;
   est_min?: number;
+  layout?: LayoutItem[];
 }
 interface Plan {
   ok: boolean;
@@ -129,6 +140,82 @@ const STRATEGIES: { key: Strategy; label: string; hint: string }[] = [
   { key: "fastest", label: "fastest print", hint: "orient for the least estimated print time (walls+infill+support)" },
 ];
 
+// Part-thumbnail cache (per session) so the picker doesn't re-render the same
+// part's SVG on every open. Keyed "project:name".
+const thumbCache = new Map<string, string>();
+
+function shortName(name: string): string {
+  const base = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
+  return base.replace(/^plate\d+_/, "");
+}
+
+// A lazily-loaded shaded iso thumbnail of a part (as modelled), for picker rows.
+function PartThumb({ project, name }: { project?: string; name: string }) {
+  const key = `${project ?? ""}:${name}`;
+  // Seeded from the cache; the component is keyed by `key` at the call site, so a
+  // different part remounts and re-seeds (no setState-in-effect needed).
+  const [svg, setSvg] = useState<string | null>(() => thumbCache.get(key) ?? null);
+  useEffect(() => {
+    if (thumbCache.has(key)) return; // already seeded from cache by the initializer
+    let alive = true;
+    fetch(`${HTTP_URL}/print/thumb?project=${encodeURIComponent(project ?? "")}&name=${encodeURIComponent(name)}`)
+      .then((r) => r.json())
+      .then((d: { svg?: string }) => {
+        if (!alive) return;
+        thumbCache.set(key, d.svg ?? "");
+        setSvg(d.svg ?? "");
+      })
+      .catch(() => void 0);
+    return () => {
+      alive = false;
+    };
+  }, [key, project, name]);
+  return (
+    <span
+      className={`part-thumb${svg ? "" : " loading"}`}
+      aria-hidden
+      dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
+    />
+  );
+}
+
+// Top-down 2D map of one plate: the bed rectangle with every part's footprint
+// placed on it (bed-local mm, y flipped for screen). Shows the packing at a
+// glance without leaving the modal for the 3D viewport.
+function PlatePreview({ plate }: { plate: PlateInfo }) {
+  const bw = plate.bed_w;
+  const bd = plate.bed_d;
+  const items = plate.layout ?? [];
+  const fs = Math.max(bw, bd) / 26;
+  const sw = Math.max(bw, bd) / 400;
+  return (
+    <svg className="plate-svg" viewBox={`${-bw * 0.02} ${-bd * 0.02} ${bw * 1.04} ${bd * 1.04}`} role="img">
+      <rect x={0} y={0} width={bw} height={bd} className="plate-bed" strokeWidth={sw * 2} />
+      {items.map((it, i) => {
+        const x = it.cx - it.w / 2;
+        const y = bd - (it.cy + it.d / 2); // flip Y for screen coords
+        return (
+          <g key={i}>
+            <rect
+              x={x}
+              y={y}
+              width={it.w}
+              height={it.d}
+              rx={Math.min(it.w, it.d) * 0.06}
+              className="plate-part"
+              style={it.color ? { fill: it.color } : undefined}
+              strokeWidth={sw * 2}
+            />
+            <text x={it.cx} y={bd - it.cy} fontSize={fs} className="plate-label" textAnchor="middle">
+              {shortName(it.name)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // Print plating: pick parts + quantities, a bed size, and a strategy; the
 // backend auto-orients each part for that objective and packs as FEW plates as
 // needed. Renders in the viewport; each plate downloads as STL/3MF.
@@ -145,6 +232,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [probe, setProbe] = useState(false); // ground-truth orientations with the real slicer (slow, exact)
   const [orients, setOrients] = useState<Record<string, string>>({}); // per-part orientation override
   const [openOrient, setOpenOrient] = useState<Record<string, boolean>>({}); // expanded orientation gallery per part
+  const [orientThumbs, setOrientThumbs] = useState<Record<string, Record<string, string>>>({}); // partKey → {label: svg}
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -301,6 +389,21 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
 
   const bump = (key: string, delta: number) =>
     setQty((q) => ({ ...q, [key]: Math.max(0, Math.min(99, (q[key] ?? 0) + delta)) }));
+
+  // Expand a part's orientation gallery; the first expand lazy-loads its per-
+  // orientation thumbnails (rendered server-side) and caches them by part key.
+  const toggleOrient = (partKey: string, project: string | undefined, name: string) => {
+    setOpenOrient((o) => ({ ...o, [partKey]: !o[partKey] }));
+    if (orientThumbs[partKey]) return;
+    fetch(`${HTTP_URL}/print/orient-thumbs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project, name, bed: { w: bedW, d: bedD }, supports }),
+    })
+      .then((r) => r.json())
+      .then((d: { thumbs?: Record<string, string> }) => setOrientThumbs((t) => ({ ...t, [partKey]: d.thumbs ?? {} })))
+      .catch(() => void 0);
+  };
 
   // The full slicer request body (parts + bed + printer/filament + quality).
   const sliceBody = () => ({
@@ -770,7 +873,8 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
               <div className="lib-empty">No parts yet — save a part to a project or the library first.</div>
             )}
             {rows.map((r) => (
-              <div className="print-row" key={r.key}>
+              <div className={`print-row${(qty[r.key] ?? 0) > 0 ? " active" : ""}`} key={r.key}>
+                <PartThumb key={r.key} project={r.project} name={r.name} />
                 <span className="print-name">{r.label}</span>
                 <span className="print-qty">
                   <button onClick={() => bump(r.key, -1)} disabled={(qty[r.key] ?? 0) === 0}>
@@ -791,6 +895,9 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 // stats label "project/name" or "name" → the picker row key
                 const slash = s.name.indexOf("/");
                 const key = slash >= 0 ? `${s.name.slice(0, slash)}:${s.name.slice(slash + 1)}` : `:${s.name}`;
+                const proj = slash >= 0 ? s.name.slice(0, slash) : undefined;
+                const bareName = slash >= 0 ? s.name.slice(slash + 1) : s.name;
+                const thumbs = orientThumbs[key] ?? {};
                 const forced = orients[key] && orients[key] !== "auto" ? orients[key] : null;
                 const cands = s.orientations ?? [];
                 const anyProbed = cands.some((c) => c.probed);
@@ -822,7 +929,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                       <>
                         <button
                           className="orient-toggle"
-                          onClick={() => setOpenOrient((o) => ({ ...o, [key]: !o[key] }))}
+                          onClick={() => toggleOrient(key, proj, bareName)}
                           title="Compare every orientation the planner evaluated and pick one"
                         >
                           {openOrient[key] ? "▾" : "▸"} {cands.length} orientations{" "}
@@ -831,6 +938,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                         {openOrient[key] && (
                           <div className="orient-table">
                             <div className="orient-row orient-head">
+                              <span />
                               <span>orientation</span>
                               <span>support</span>
                               <span>time</span>
@@ -839,6 +947,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                             {cands.map((c) => {
                               const selected = forced ? forced === c.label : c.recommended;
                               const stability = c.contact >= 150 ? "▰ solid" : c.contact >= 30 ? "▪ ok" : "△ tippy";
+                              const thumb = thumbs[c.label];
                               return (
                                 <button
                                   key={c.label}
@@ -852,6 +961,11 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                                     c.fits ? "" : " · bigger than the bed"
                                   }`}
                                 >
+                                  <span
+                                    className={`orient-thumb${thumb ? "" : " loading"}`}
+                                    aria-hidden
+                                    dangerouslySetInnerHTML={thumb ? { __html: thumb } : undefined}
+                                  />
                                   <span className="orient-name">
                                     {c.recommended ? "★ " : ""}
                                     {c.label}
@@ -893,6 +1007,19 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                   </div>
                 );
               })}
+              {(plan.plates?.length ?? 0) > 0 && (plan.plates ?? []).some((p) => (p.layout?.length ?? 0) > 0) && (
+                <div className="plate-previews">
+                  {plan.plates?.map((p) => (
+                    <div className="plate-card" key={p.index}>
+                      <PlatePreview plate={p} />
+                      <div className="plate-cap">
+                        {(plan.plates?.length ?? 1) > 1 ? `plate ${p.index + 1} · ` : ""}
+                        {p.w}×{p.d} mm
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className={plan.fits ? "print-fit ok" : "print-fit bad"}>
                 {(plan.plates?.length ?? 1) === 1
                   ? `one plate, ${plan.plates?.[0]?.w}×${plan.plates?.[0]?.d} mm on a ${plan.plates?.[0]?.bed_w}×${plan.plates?.[0]?.bed_d} bed`
