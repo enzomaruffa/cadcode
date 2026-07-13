@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status: v0 implemented (M0–M7 + printability)
+## Status: v0 shipped + major arcs on top
 
-The full v0 from `cad-platform-v0-plan.md` is built and working. Issue tracking is in **beads** (`bd list`, `bd ready`); the milestone ladder is closed out.
+The full v0 from `cad-platform-v0-plan.md` (M0–M7 + printability) is built, plus: the **projects model** (multi-file parts/scenes), the **print planner** (orientation search + real-slicer ground truth + plating), the **reworked project agent**, **physics/animation** in the viewer, and **editor intelligence** (completions/hover/rename). Deployed at **cad.enzomaruffa.dev**. Issue tracking is in **beads** (`bd list`, `bd ready`).
 
 ### Run it
 
@@ -26,12 +26,38 @@ Lint/format/type-check are wired: backend uses **ruff** (lint+format) + **ty** (
 
 The agent uses **Gemini 3.5 Flash** by default (`google:gemini-3.5-flash`); override with `CAD_AGENT_MODEL` (any pydantic-ai model id). It needs `GEMINI_API_KEY`/`GOOGLE_API_KEY` at runtime. The backend port is configurable on the frontend via `VITE_WS_URL` / `VITE_HTTP_URL`.
 
+Local scripting gotcha: rendering SVG→PNG locally (`cairosvg`) needs brew cairo — run with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run python ...` (set BEFORE the process starts).
+
+### Deploy (prod: cad.enzomaruffa.dev)
+
+- Server **webrato-remote** (SSH alias), repo checkout at `~/cad-kit`, container `cad-kit-web-1`.
+- **App code**: `git push`, then `ssh -A webrato-remote "cd ~/cad-kit && git pull --ff-only && docker compose build web && docker compose up -d web"`.
+- **Project files** (parts/scenes) live on a volume at `/data/projects` — NOT in the image. `backend/projects/` is **gitignored** locally; push it with `COPYFILE_DISABLE=1 tar --no-xattrs -czf x.tgz <proj>` → scp → `docker cp` → extract in the container, then **`find /data/projects -name "._*" -delete`** (macOS AppleDouble files break `_materialize`'s `read_text`).
+- Run Python inside the container with **`/app/backend/.venv/bin/python`** (bare `python` lacks the deps). Verify after every push: run every part preview + scene via `app.project_runner.run_project` and check `ok`.
+- Prod has **headless OrcaSlicer** (`/opt/orcaslicer`, runs under xvfb) — real slicing works there; local usually has no slicer (probe features degrade gracefully).
+
+### Projects (the multi-file model)
+
+`projects/<name>/{project.py, parts/*.py, scenes/*.py}` — `project.py` holds constants (a literal `NAME: Annotated[float, Range(lo, hi)] = v` becomes a UI slider; computed constants are skipped, which is a feature), parts are functions named after their file, scenes `show(...)` assemblies. `app/project_runner.py` materializes every project into a temp workspace and **rewrites bare imports** (`from project import X`, `from parts.y import y`) to absolute `projects.<pid>.…` — so a part binds to *its own* project's constants. Cross-project imports (`from projects.<other>.parts.x import x`) pass through untouched **and bind to the OTHER project's constants**.
+
+Conventions that hold across the flagship `dishrack` project (+ `dishrack_mini`):
+- **Everything constants-driven.** Absolute mm in part code is a smell; real-world thresholds live as `SPEC_*` constants so scaled variants stay satisfiable.
+- **Specs (`require(...)`) are ambient** (bound on builtins with `print_hint`): parts assert their own sanity only; **scenes assert assembly clearances** (a part-level headroom spec once broke an intentionally-short scene).
+- **The mini-project pattern**: a scaled variant = a new project whose `project.py` derives from the source (`from projects.dishrack import project as full`, `X = full.X * SCALE`) with **printability floors** (walls, pin fits, drain holes are absolute printer physics) + verbatim-copied `parts/`/`scenes/` (refresh by re-copying).
+- `print_hint(part, flow=(x,y,z))` declares print intent (water-flow layer alignment; `cosmetic` faces) — the planner obeys it above strategy.
+- Sockets get **45° cone roofs** (self-supporting bores); boxes flush with cylinders are pulled **1mm inside the tangent** (tangent faces print as square artifacts); parts wider than the bed are designed as **bolted half-lap halves** (M3 tokens from `lib/design.py`), not slicer-split.
+
+### The print planner (`app/printplan.py` + `kernel/print_time.py` + `kernel/slicer.py`)
+
+Per part: ~48 candidate orientations (principal + Fibonacci sphere) scored on **removability-weighted support cost** (support trapped in a bore ×10, via a voxel occupancy grid + escape rays) → top few get layer-sliced estimates → optional **ground-truth probe** (`probe=True`, the 🎯 toggle): the REAL slicer slices the finalists and re-ranks by exact support grams parsed from G-code feature blocks (`support_stats`), cached by mesh hash. Ranking currency follows the strategy (material=grams, fastest=minutes, plates=footprint), **bed-fit outranks everything** (an orientation that can't fit any plate loses to one that can). Packing is FFD shelves + a greedy **swap-to-fit** pass over each part's Pareto-set of orientations (never trades away a print hint). Plates export as STL/3MF/G-code; per-part `orient` override; split suggestions for support-heavy parts.
+
 ### Where things live (backend `app/`)
 
 - `protocol.py` — the one WS envelope + message types (§8). `session.py` — per-socket dispatch (the `apply_edit → run → tessellate → render` spine). `main.py` — FastAPI app, WS, `/library` endpoint, shared warmed kernel lifespan.
 - `kernel/` — `runner.py` (exec build123d, `show()`/`require()` collectors, provenance-friendly), `sandbox.py` (AST allowlist + restricted builtins), `subprocess_kernel.py` + `worker_main.py` (isolated worker, SIGALRM timeout, op dispatch: run/select/printability/provenance/geomdiff), `select.py` (pick → measure + selector synthesis), `printability.py` (overhang heatmap), `provenance.py` (line↔face), `geomdiff.py` (boolean added/removed).
 - `tessellate.py` — build123d → ocp-tessellate shapes tree consumed by our renderer (`numpy_to_json`; states embedded per-part; `triangles_per_face`/`segments_per_edge` drive per-face/edge picking). `gitstore.py` — checkpoints. `library.py` + `thumbnail.py` — parts catalog + iso SVGs. `params.py` — slider extraction. `agent/cad_agent.py` — PydanticAI agent (typed `CadDeps`, validated `Patch`, self-correct + spec-integrity validator).
-- `lib/` — shared `design.py` tokens + `parts/` catalog (on `PYTHONPATH`, allowlisted in the sandbox).
+- `lib/` — shared `design.py` tokens (WALL/CLEARANCE/M3_* + materials) + `parts/` catalog (on `PYTHONPATH`, allowlisted in the sandbox).
+- `projects.py`/`project_runner.py` — multi-file projects (see Projects section). `project_agent.py` — the project agent. `printplan.py` + `kernel/print_time.py`/`slicer.py` — print planner + headless Orca/Prusa. `b3d_docs.py`/`completions.py` — build123d introspection feeding editor autocomplete/hover/signature-help. `rename.py` — cross-project part rename refactor. `joints.py`/`bake.py` — articulation + bake-animation-to-code. `thumbnail.py` — GL-free painter's-algorithm iso SVG renders (library thumbnails AND the agent's vision pass; composes per-node `loc` transforms, depth-keys edges).
 
 ### The 3D renderer (`viewer/` — our own `@cadcode/viewer`)
 
@@ -50,6 +76,8 @@ We render OCP tessellation with our **own three.js renderer** (top-level `viewer
 - **Diagnostic view modes force the flat preset** (no AO/tone-mapping) so printability/provenance/geomdiff colors stay literal; presentation (✨) only applies to the `technical` view mode.
 - **Editor theme is configurable:** `frontend/src/lib/editorTheme.ts` defines the `cadcode` Monaco theme from token colors (persisted in localStorage; live picker in the File menu). Fonts are self-hosted Geist in `frontend/public/fonts/`.
 - `window.__store` / `window.__viewer` / `window.monaco` are exposed for debugging/E2E.
+- **Physics/animation** live in `viewer/src/physics/` (Rapier WASM in a Web Worker, voxel concave collision, joint articulation, exploded view); "bake" turns a sim pose into code via `app/bake.py` — code stays the source of truth.
+- The viewport has a **measured ruler grid** (`viewer/src/core/Grid.ts`: cutting-mat floor + walls, 1/2/5 steps, size chip) cycled from the toolbar.
 
 ## What this project is
 
@@ -99,7 +127,9 @@ One JSON envelope, request/response correlated by `id`: `{ "type": "...", "id": 
 
 ## The agent loop (what makes it more than a chatbot)
 
-PydanticAI agent with typed dependency injection (`CadDeps`: live doc, kernel, selection, library) and a **validated `Patch` output** (`diff` / `rationale` / `targets`) — the agent retries until the output validates. The loop: read source + geometry + selection → **`dry_run`/`measure` the candidate edit in the sandbox and self-correct before the human sees anything** → return a validated `Patch` shown as a code + geometry diff to accept/reject. Step 3 (self-correction against real execution) is the whole point — never bypass it. Tools mirror `build123d-mcp`: `read_source`, `propose_patch`, `execute`, `measure`, `clearance`, `get_selection`, `list_library_parts`. Skip `pydantic-graph` in v0.
+Two agents share the philosophy (self-correct against real execution before the human sees anything — never bypass it):
+- `agent/cad_agent.py` — single-buffer agent: typed `CadDeps`, validated `Patch` output, dry-run + spec-integrity validator.
+- `app/project_agent.py` — the **multi-file project agent**: search/replace `FileEdit{path, find, replace}` patches, front-loaded first message (files + constants + geometry facts), **lean dry-runs** (`run_source_lean`: no tessellation, bbox/volume/gap facts), error hints from `b3d_docs` signatures, an optional **vision sanity pass** (`CAD_AGENT_VISION=1`: renders the result via `thumbnail.iso_svg_shapes` and a vision model checks it), and persistent `.agent_notes.md` memory. Returns the full new source (FE contract).
 
 ## Stances on the hard problems (decided — don't rediscover mid-build)
 
@@ -112,10 +142,6 @@ PydanticAI agent with typed dependency injection (`CadDeps`: live doc, kernel, s
 ## Cohesion model
 
 Cohesion = **consistency** (shared `lib/design.py` design tokens like `WALL`, `CLEARANCE`, `M3` that every part imports) + **connection** (build123d `Joint`s + `connect_to`, not hand-computed transforms) + **composition** (a library-aware agent fed each part's signature/docstring/params/joints/thumbnail). An assembly is just a script that imports parts and connects joints — same substrate, so history/agent/diff/render all work identically.
-
-## Build milestones (sequenced; M3 is the soul — don't over-polish M0–M2)
-
-M0 round-trip (Monaco→WS→build123d→tessellate→render) · M1 live + errors + sandbox · M2 selection + measure (click→selector synthesis starts) · **M3 the agent** · M4 cohesion (tokens/joints/library) · M5 git + history · M6 provenance + bidirectional highlighting · M7 mouse→code (one gesture first). *Parallel track after M2:* the printability overlay (overhang heatmap vs. build direction) — the differentiating feature.
 
 ## Reference to mine
 
