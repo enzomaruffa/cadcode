@@ -116,6 +116,80 @@ def iso_svg(part: Any, size: int = 140) -> str:
     return iso_svg_shapes(shapes, size)
 
 
+def decimate(verts: Any, tris: Any, cells: int = 24) -> tuple[Any, Any]:
+    """Grid vertex-clustering decimation — snap verts to a coarse ``cells``³ grid,
+    merge coincident ones, drop the triangles that collapse. A part tessellated at
+    ~9k triangles drops to a few hundred: plenty for a small thumbnail, and cheap
+    enough to render inline. Faceted, but that reads fine at thumbnail size."""
+    import numpy as np
+
+    v = np.asarray(verts, dtype=float)
+    t = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+    if len(v) == 0 or len(t) == 0:
+        return v, t
+    lo = v.min(axis=0)
+    cell = float(np.maximum(v.max(axis=0) - lo, 1e-6).max()) / max(cells, 1)
+    key = np.floor((v - lo) / cell).astype(np.int64)
+    _uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.ravel()
+    n = int(inv.max()) + 1
+    newv = np.zeros((n, 3))
+    counts = np.zeros(n)
+    np.add.at(newv, inv, v)
+    np.add.at(counts, inv, 1)
+    newv /= np.maximum(counts, 1)[:, None]
+    nt = inv[t]
+    good = (nt[:, 0] != nt[:, 1]) & (nt[:, 1] != nt[:, 2]) & (nt[:, 0] != nt[:, 2])
+    return newv, nt[good]
+
+
+def iso_svg_mesh(verts: Any, tris: Any, size: int = 96, color: tuple = _BASE, cells: int | None = 24) -> str:
+    """Shaded isometric SVG straight from a raw (verts, tris) mesh — used for the
+    print planner's per-orientation previews (the mesh is already rotated into the
+    candidate orientation, so the thumbnail shows exactly how it sits on the bed).
+    Decimates to ``cells``³ first unless ``cells`` is None."""
+    import numpy as np
+
+    v = np.asarray(verts, dtype=float)
+    t = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+    if cells:
+        v, t = decimate(v, t, cells)
+    if len(v) == 0 or len(t) == 0:
+        return ""
+    tv = v[t]  # (M,3,3)
+    x, y, z = tv[:, :, 0], tv[:, :, 1], tv[:, :, 2]
+    px = (x - y) * _COS30
+    py = (x + y) * _SIN30 - z
+    depth = (x + y + z).mean(axis=1)
+    p0, p1, p2 = tv[:, 0], tv[:, 1], tv[:, 2]
+    nrm = np.cross(p1 - p0, p2 - p0)
+    nn = np.linalg.norm(nrm, axis=1)
+    nn[nn == 0] = 1.0
+    dot = (nrm @ np.asarray(_LIGHT)) / (nn * _LN)
+    shade = 0.32 + 0.68 * np.clip(np.abs(dot), 0.0, 1.0)
+    minx, maxx = float(px.min()), float(px.max())
+    miny, maxy = float(py.min()), float(py.max())
+    w = (maxx - minx) or 1.0
+    h = (maxy - miny) or 1.0
+    scale = (size - 8) / max(w, h)
+    ox = (size - w * scale) / 2 - minx * scale
+    oy = (size - h * scale) / 2 - miny * scale
+    sx = px * scale + ox
+    sy = py * scale + oy
+    r, g, b = color
+    order = np.argsort(depth)
+    out = []
+    for i in order:
+        s = shade[i]
+        fill = f"rgb({int(r * s)},{int(g * s)},{int(b * s)})"
+        pts = f"{sx[i, 0]:.1f},{sy[i, 0]:.1f} {sx[i, 1]:.1f},{sy[i, 1]:.1f} {sx[i, 2]:.1f},{sy[i, 2]:.1f}"
+        out.append(f'<polygon points="{pts}" fill="{fill}" stroke="{fill}"/>')
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
+        f'stroke-width="0.5" stroke-linejoin="round">' + "".join(out) + "</svg>"
+    )
+
+
 def iso_svg_shapes(shapes: dict, size: int = 140) -> str:
     """Shaded isometric SVG from an already-tessellated shapes tree (any number
     of parts) — used for library thumbnails AND the agent's vision sanity pass."""

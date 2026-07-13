@@ -596,6 +596,43 @@ async def print_parts(project: str = "") -> dict:
     return {"parts": print_candidates(project or None)}
 
 
+@app.get("/print/thumb")
+async def print_thumb(project: str = "", name: str = "") -> dict:
+    """A shaded iso SVG thumbnail of a printable part, for the picker rows."""
+    import asyncio
+
+    from app.printplan import render_part_thumb
+
+    if not name:
+        return {"svg": ""}
+    svg = await asyncio.to_thread(render_part_thumb, project or None, name)
+    return {"svg": svg}
+
+
+@app.post("/print/orient-thumbs")
+async def print_orient_thumbs(payload: dict) -> dict:
+    """Per-orientation thumbnails for one part: {project?, name, bed} → {thumbs:
+    {label: svg}}. Loaded lazily when the user opens a part's orientation gallery,
+    then merged onto the plan's ranked orientations by label."""
+    import asyncio
+
+    from app.printplan import orientation_thumbs
+
+    name = str(payload.get("name") or "")
+    if not name:
+        return {"thumbs": {}}
+    project = str(payload.get("project") or "") or None
+    bed_in = payload.get("bed") or {}
+    try:
+        bed = (float(bed_in.get("w") or 220), float(bed_in.get("d") or 220))
+    except (TypeError, ValueError):
+        bed = (220.0, 220.0)
+    supports = payload.get("supports")
+    supports = True if supports is None else bool(supports)
+    thumbs = await asyncio.to_thread(orientation_thumbs, project, name, bed, supports)
+    return {"thumbs": thumbs}
+
+
 @app.get("/print/calibration")
 async def print_calibration() -> dict:
     """How well-calibrated the instant estimator is (samples learned from real

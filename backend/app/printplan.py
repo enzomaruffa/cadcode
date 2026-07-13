@@ -152,6 +152,7 @@ def _orient(
     force: str | None = None,
     probe: dict | None = None,
     bed: tuple[float, float] | None = None,
+    thumbs: bool = False,
 ) -> tuple[Any, str, float, float, tuple[Any, Any], Any, dict]:
     """Pick the best orientation for the strategy and return the full ranked field.
 
@@ -383,9 +384,19 @@ def _orient(
                 }
             )
 
-    # A compact per-orientation record for the UI (the whole ranked field).
-    candidates_out = [
-        {
+    # A compact per-orientation record for the UI (the whole ranked field). When
+    # `thumbs`, each carries a shaded iso SVG of the part IN that orientation —
+    # rendered from the already-rotated, bed-dropped mesh, so it shows exactly how
+    # the part sits on the plate (mouth-down vs a weird tilt, at a glance).
+    thumb_svgs: dict[str, str] = {}
+    if thumbs:
+        from app.thumbnail import iso_svg_mesh
+
+        for m in eval_set:
+            thumb_svgs[m["label"]] = iso_svg_mesh(m["v"], tris, size=104, cells=16)
+    candidates_out = []
+    for m in eval_set:
+        rec = {
             "label": m["label"],
             "tilt_deg": m["tilt"],
             "principal": m["principal"],
@@ -404,8 +415,9 @@ def _orient(
             "recommended": bool(m.get("recommended")),
             "hint_penalty": m["pen"],
         }
-        for m in eval_set
-    ]
+        if thumbs:
+            rec["thumb"] = thumb_svgs[m["label"]]
+        candidates_out.append(rec)
 
     oriented = obj.rotate(Axis((0, 0, 0), tuple(np.asarray(axis, dtype=float))), angle) if angle else obj
     bb = oriented.bounding_box()
@@ -428,6 +440,71 @@ def _build_part(project: str | None, name: str) -> Any:
         mod = __import__("lib.parts", fromlist=[name])
     fn = getattr(mod, name)
     return fn()
+
+
+def _with_project(project: str | None, fn):
+    """Run ``fn()`` with the project workspace materialized on sys.path and the
+    ambient DSL (show/require/print_hint) bound — the setup a part build needs."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from app.kernel.runner import _ambient_dsl, _make_namespace
+    from app.project_runner import _RUN_LOCK, _materialize
+
+    tmp = Path(tempfile.mkdtemp(prefix="cadthumb_")) if project else None
+    with _RUN_LOCK:
+        added = None
+        try:
+            if tmp is not None:
+                _materialize(tmp, {}, "_none")
+                added = str(tmp)
+                sys.path.insert(0, added)
+            ns, _shown, _specs = _make_namespace()
+            with _ambient_dsl(ns):
+                return fn()
+        finally:
+            if added and added in sys.path:
+                sys.path.remove(added)
+            for mod in [m for m in sys.modules if m == "projects" or m.startswith("projects.")]:
+                del sys.modules[mod]
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+
+def render_part_thumb(project: str | None, name: str, size: int = 120) -> str:
+    """A shaded iso SVG thumbnail of a printable part (as-modelled) for the picker."""
+    from app.kernel.print_time import mesh_of
+    from app.thumbnail import iso_svg_mesh
+
+    def go() -> str:
+        v, t = mesh_of(_build_part(project, name))
+        return iso_svg_mesh(v, t, size=size)
+
+    try:
+        return _with_project(project, go)
+    except Exception:  # noqa: BLE001 — a thumbnail must never break the picker
+        return ""
+
+
+def orientation_thumbs(
+    project: str | None, name: str, bed: tuple[float, float] = DEFAULT_BED, supports: bool = True
+) -> dict[str, str]:
+    """{orientation label → iso SVG of the part in that orientation}. The frontend
+    merges these into the plan's ranked orientation field by label, so the gallery
+    shows each orientation's thumbnail beside its real support/time numbers."""
+
+    def go() -> dict[str, str]:
+        base = _build_part(project, name)
+        _s, _l, _su, _m, _mesh, _p, extra = _orient(
+            base, "material", supports, hints=[], force="auto", probe=None, bed=bed, thumbs=True
+        )
+        return {c["label"]: c["thumb"] for c in extra.get("candidates", []) if c.get("thumb")}
+
+    try:
+        return _with_project(project, go)
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 class _Plate:
@@ -776,6 +853,9 @@ def plan_print(
             row_w = n_plates * bed[0] + (n_plates - 1) * gap
             objs, names, colors, plate_of = [], [], [], []
             plate_meshes: list[list[tuple[Any, Any]]] = [[] for _ in range(n_plates)]
+            # Top-down footprint per plate (bed-local coords) — powers the 2D plate
+            # preview so the packing is visible without reading the 3D viewport.
+            plate_layout: list[list[dict]] = [[] for _ in range(n_plates)]
             for (idx, solid, name, mesh), _r in zip(inst, rects, strict=True):
                 pi, cx, cy, rotated = placements[idx]
                 placed = Rot(Z=90) * solid if rotated else solid
@@ -785,6 +865,21 @@ def plan_print(
                 colors.append(_obj_color(solid))
                 plate_of.append(pi)
                 plate_meshes[pi].append(mesh)
+                bb = solid.bounding_box()
+                pw, pdp = bb.max.X - bb.min.X, bb.max.Y - bb.min.Y
+                lw, ld = (pdp, pw) if rotated else (pw, pdp)
+                col = _obj_color(solid)
+                plate_layout[pi].append(
+                    {
+                        "name": name,
+                        "cx": round(cx, 1),
+                        "cy": round(cy, 1),
+                        "w": round(lw, 1),
+                        "d": round(ld, 1),
+                        "rotated": bool(rotated),
+                        "color": col if isinstance(col, str) else None,
+                    }
+                )
 
             shapes, states, bbox = tessellate(objs, names=names, colors=colors)
         finally:
@@ -862,6 +957,7 @@ def plan_print(
                 "bed_w": bed[0],
                 "bed_d": bed[1],
                 "est_min": round(plate_minutes[i], 1),
+                "layout": plate_layout[i],  # top-down footprints for the 2D preview
             }
             for i, p in enumerate(plates)
         ],
