@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The full v0 from `cad-platform-v0-plan.md` (M0–M7 + printability) is built, plus: the **projects model** (multi-file parts/scenes), the **print planner** (orientation search + real-slicer ground truth + plating), the **reworked project agent**, **physics/animation** in the viewer, and **editor intelligence** (completions/hover/rename). Deployed at **cad.enzomaruffa.dev**. Issue tracking is in **beads** (`bd list`, `bd ready`).
 
+**Repo skills** (`.claude/skills/`) — invoke these before the matching task instead of rediscovering: `cad-design` (part/project design conventions + printability rules + fit-proof pattern), `cad-verify` (run/verify/render locally), `cad-deploy` (the two prod deploy paths + container verification), `cad-print-planner` (planner APIs, orientation probing, slicing).
+
 ### Run it
 
 ```bash

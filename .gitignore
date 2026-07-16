@@ -32,3 +32,8 @@ backend/static/
 # Runtime-created projects + folder-store snapshots (user data, per-container)
 backend/projects/
 backend/.workspace/
+
+# Repo skills are shared (override the user-global `.claude` ignore); local settings stay ignored.
+!.claude/
+.claude/*
+!.claude/skills/
