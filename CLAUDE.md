@@ -26,7 +26,7 @@ cd frontend && npx tsc -b --noEmit && npm run lint && npm run format            
 
 Lint/format/type-check are wired: backend uses **ruff** (lint+format) + **ty** (Astral's type checker) — config in `backend/pyproject.toml` (`[tool.ruff]`, `[tool.ty]`); frontend uses **ESLint** (flat config `eslint.config.js`) + **Prettier** (`.prettierrc.json`) — `npm run lint` / `npm run format`. All green; keep them green.
 
-The agent uses **Gemini 3.5 Flash** by default (`google:gemini-3.5-flash`); override with `CAD_AGENT_MODEL` (any pydantic-ai model id). It needs `GEMINI_API_KEY`/`GOOGLE_API_KEY` at runtime. The backend port is configurable on the frontend via `VITE_WS_URL` / `VITE_HTTP_URL`.
+The agent uses **GPT-5.6 Terra** by default (`openai:gpt-5.6-terra`); override with `CAD_AGENT_MODEL` (any pydantic-ai model id). It needs `OPENAI_API_KEY` at runtime — or `GEMINI_API_KEY`/`GOOGLE_API_KEY` if you point it back at a `google:` model. The backend port is configurable on the frontend via `VITE_WS_URL` / `VITE_HTTP_URL`.
 
 Local scripting gotcha: rendering SVG→PNG locally (`cairosvg`) needs brew cairo — run with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run python ...` (set BEFORE the process starts).
 

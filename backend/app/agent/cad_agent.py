@@ -41,9 +41,9 @@ def _require_calls(source: str) -> list[str]:
     return calls
 
 
-# Gemini 3.5 Flash by default (needs GEMINI_API_KEY / GOOGLE_API_KEY at run time).
+# GPT-5.6 Terra by default (needs OPENAI_API_KEY at run time).
 # Override with the CAD_AGENT_MODEL env var (any pydantic-ai model id).
-DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "google:gemini-3.5-flash")
+DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "openai:gpt-5.6-terra")
 
 INSTRUCTIONS = """\
 You edit a single build123d Python script — the one source of truth for a 3D CAD model.

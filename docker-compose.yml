@@ -9,8 +9,9 @@ services:
     ports:
       - "127.0.0.1:21310:8000"
     environment:
-      # Agent model + key (set GEMINI_API_KEY in .env on the host).
-      CAD_AGENT_MODEL: ${CAD_AGENT_MODEL:-google:gemini-3.5-flash}
+      # Agent model + keys (set OPENAI_API_KEY in .env on the host).
+      CAD_AGENT_MODEL: ${CAD_AGENT_MODEL:-openai:gpt-5.6-terra}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       # Persist git checkpoints + user projects across restarts/redeploys.
