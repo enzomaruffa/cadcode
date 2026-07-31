@@ -45,6 +45,12 @@ def _require_calls(source: str) -> list[str]:
 # Override with the CAD_AGENT_MODEL env var (any pydantic-ai model id).
 DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "openai:gpt-5.6-terra")
 
+# Reasoning depth for OpenAI models. CAD edits are geometry reasoning under
+# constraints, so this earns its keep — reasoning tokens bill as output, but a
+# wrong solid costs a whole round trip. Ignored for non-OpenAI providers, which
+# take their own thinking config. Valid: none | low | medium | high | xhigh.
+CAD_REASONING_EFFORT = os.environ.get("CAD_REASONING_EFFORT", "high")
+
 INSTRUCTIONS = """\
 You edit a single build123d Python script — the one source of truth for a 3D CAD model.
 
@@ -91,15 +97,33 @@ class Patch(BaseModel):
     )
 
 
+def _model_settings(model_id: Any) -> Any | None:
+    """Reasoning effort for OpenAI models; None for every other provider.
+
+    Only OpenAI takes `openai_reasoning_effort`, and importing the settings
+    class pulls in the optional `openai` extra — so both are gated on the id
+    actually being an OpenAI one.
+    """
+    if not isinstance(model_id, str) or not model_id.startswith("openai:"):
+        return None
+    if not CAD_REASONING_EFFORT:
+        return None
+    from pydantic_ai.models.openai import OpenAIChatModelSettings
+
+    return OpenAIChatModelSettings(openai_reasoning_effort=CAD_REASONING_EFFORT)
+
+
 def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:
     # output_type=Patch makes this an Agent[CadDeps, Patch] at runtime, but the
     # type checker can't tie the kwarg to the generic — annotate it explicitly.
+    model_id = model or DEFAULT_MODEL
     agent = Agent[CadDeps, Patch](
-        model or DEFAULT_MODEL,
+        model_id,
         deps_type=CadDeps,
         output_type=Patch,
         instructions=INSTRUCTIONS,
         retries=3,
+        model_settings=_model_settings(model_id),
     )
 
     @agent.tool
