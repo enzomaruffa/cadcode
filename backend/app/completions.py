@@ -25,7 +25,7 @@ def _part_info(project: str, name: str) -> dict[str, Any]:
     """{name, params, doc} for one project part — regex, not import."""
     info: dict[str, Any] = {"name": name, "params": "", "doc": ""}
     try:
-        text = (ROOT / _ident(project) / "parts" / f"{_ident(name)}.py").read_text()
+        text = (ROOT / _ident(project) / "parts" / f"{_ident(name)}.py").read_text(encoding="utf-8")
     except OSError:
         return info
     for m in _DEF_RE.finditer(text):
@@ -41,7 +41,7 @@ def _part_info(project: str, name: str) -> dict[str, Any]:
 
 def _constants(project: str) -> list[str]:
     try:
-        text = (ROOT / _ident(project) / "project.py").read_text()
+        text = (ROOT / _ident(project) / "project.py").read_text(encoding="utf-8")
     except OSError:
         return []
     return [m.group(1) for m in _CONST_RE.finditer(text)]

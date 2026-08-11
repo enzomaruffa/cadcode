@@ -66,7 +66,8 @@ COPY --from=frontend /build/frontend/dist ./static
 ENV CAD_STATIC_DIR=/app/backend/static \
     CAD_WORKSPACE=/data/workspace \
     CAD_PROJECTS=/data/projects \
-    PORT=8000
+    PORT=8000 \
+    PYTHONUTF8=1
 EXPOSE 8000
 
 CMD ["sh", "-c", "uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

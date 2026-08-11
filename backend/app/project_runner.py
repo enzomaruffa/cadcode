@@ -53,6 +53,13 @@ def _write_pkg(path: Path) -> None:
     (path / "__init__.py").write_text("")
 
 
+def _read(path: Path) -> str:
+    """Read a project source file. Python source is UTF-8 by definition (PEP 263),
+    so it must never be decoded through the ambient locale — a C/POSIX locale
+    turns every em-dash in a docstring into a 500."""
+    return path.read_text(encoding="utf-8")
+
+
 def _materialize(tmp: Path, overrides: dict[str, str], current: str) -> None:
     """Copy EVERY project into ``tmp/projects/<pid>/`` as a package (rewriting
     local imports), then apply the current project's uncommitted overrides."""
@@ -69,14 +76,14 @@ def _materialize(tmp: Path, overrides: dict[str, str], current: str) -> None:
             _write_pkg(dest / "scenes")
             constants = proj_dir / "project.py"
             if constants.is_file():
-                (dest / "project.py").write_text(_rewrite_imports(constants.read_text(), pid))
+                (dest / "project.py").write_text(_rewrite_imports(_read(constants), pid), encoding="utf-8")
             for sub in ("parts", "scenes"):
                 d = proj_dir / sub
                 if not d.is_dir():
                     continue
                 for f in d.glob("*.py"):
                     if f.stem != "__init__":
-                        (dest / sub / f.name).write_text(_rewrite_imports(f.read_text(), pid))
+                        (dest / sub / f.name).write_text(_rewrite_imports(_read(f), pid), encoding="utf-8")
 
     # Overrides are keyed project-relative for the CURRENT project.
     cur = root / current
@@ -86,7 +93,7 @@ def _materialize(tmp: Path, overrides: dict[str, str], current: str) -> None:
     for rel, source in (overrides or {}).items():
         p = cur / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(_rewrite_imports(source, current))
+        p.write_text(_rewrite_imports(source, current), encoding="utf-8")
 
 
 def run_project(
@@ -132,7 +139,7 @@ def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_so
             mat = tmp / "projects" / current / target_rel
             if not mat.is_file():
                 return {"ok": False, "error": f"run target {target_rel} does not exist"}
-            target_source = mat.read_text()  # already rewritten during materialize
+            target_source = _read(mat)  # already rewritten during materialize
 
         sys.path.insert(0, added_path)
         try:
