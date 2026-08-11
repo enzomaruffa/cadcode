@@ -73,13 +73,13 @@ def project_files(project: str) -> dict[str, str]:
         return files
     constants = base / "project.py"
     if constants.is_file():
-        files["project.py"] = constants.read_text()
+        files["project.py"] = constants.read_text(encoding="utf-8")
     for sub in ("parts", "scenes"):
         d = base / sub
         if d.is_dir():
             for p in sorted(d.glob("*.py")):
                 if p.stem != "__init__":
-                    files[f"{sub}/{p.name}"] = p.read_text()
+                    files[f"{sub}/{p.name}"] = p.read_text(encoding="utf-8")
     return files
 
 
@@ -99,7 +99,7 @@ def write_project_files(project: str, edits: dict[str, str]) -> dict:
             rel = f"{parts[0]}/{_ident(parts[1][:-3])}.py"
         target = base / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source)
+        target.write_text(source, encoding="utf-8")
         written.append(rel)
     return {"ok": True, "project": _ident(project), "written": written}
 
@@ -116,7 +116,7 @@ def read_file(project: str, kind: str, name: str = "") -> dict:
         return {"error": f"unknown kind {kind!r}"}
     if not path.is_file():
         return {"error": "not found", "source": ""}
-    return {"source": path.read_text()}
+    return {"source": path.read_text(encoding="utf-8")}
 
 
 def write_file(project: str, kind: str, name: str, source: str) -> dict:
@@ -124,7 +124,7 @@ def write_file(project: str, kind: str, name: str, source: str) -> dict:
     if path is None:
         return {"ok": False, "error": f"unknown kind {kind!r}"}
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source)
+    path.write_text(source, encoding="utf-8")
     return {"ok": True, "project": _ident(project), "kind": kind, "name": _ident(name) if name else "project"}
 
 
@@ -141,6 +141,7 @@ def create_project(name: str) -> dict:
             "from lib.params import Range\n\n"
             "# Project-wide params. A typed Range(...) gives a slider in the tokens\n"
             "# panel; tweak it and every part + scene re-derives. Plain = also works.\n"
-            "UNIT: Annotated[float, Range(5, 40)] = 10.0  # base module size (mm)\n"
+            "UNIT: Annotated[float, Range(5, 40)] = 10.0  # base module size (mm)\n",
+            encoding="utf-8",
         )
     return {"ok": True, "name": ident}
