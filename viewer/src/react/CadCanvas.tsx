@@ -44,6 +44,8 @@ export interface CadCanvasHandle {
   setPose: (poses: Record<string, [[number, number, number], [number, number, number, number]]>) => void;
   flashLeaves: (ids: string[], hex: string) => void;
   resetPhysics: () => void;
+  playJoints: (on: boolean, periodS?: number) => void;
+  hasDrivableJoints: () => boolean;
   setExplode: (factor: number) => void;
   bakePhysics: () => Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }>;
 }
@@ -78,6 +80,8 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     setPose: (poses) => viewerRef.current?.setPose(poses),
     flashLeaves: (ids, hex) => viewerRef.current?.flashLeaves(ids, hex),
     resetPhysics: () => viewerRef.current?.resetPhysics(),
+    playJoints: (on, periodS) => viewerRef.current?.playJoints(on, periodS),
+    hasDrivableJoints: () => viewerRef.current?.hasDrivableJoints ?? false,
     setExplode: (factor) => viewerRef.current?.setExplode(factor),
     bakePhysics: () => viewerRef.current?.bakePhysics() ?? {},
   }));

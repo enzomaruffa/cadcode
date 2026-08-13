@@ -382,6 +382,8 @@ export class CadViewer {
     this.setPicking(false); // the physics grab owns the pointer while playing
     // The solver runs in a Web Worker and streams transforms back; it drives the
     // render itself (via the requestRender callback) — no main-thread step loop.
+    // Contact events flash the touching parts — honest animation, no ghosting.
+    this.physics.onContacts = (ids) => this.flashLeaves(ids, "#f85149");
     this.physics.start(this.sceneGraph, this.joints);
   }
 
@@ -389,6 +391,17 @@ export class CadViewer {
    *  articulated constraints). Set from the geometry payload before play. */
   setJoints(joints: RawJoint[]): void {
     this.joints = joints;
+  }
+
+  /** Whether any declared joint has a motion range the drive can sweep. */
+  get hasDrivableJoints(): boolean {
+    return this.joints.some((j) => j.range && (j.kind === "revolute" || j.kind === "prismatic"));
+  }
+
+  /** Sweep every ranged joint through its declared range (physics must be on). */
+  playJoints(on: boolean, periodS = 4): void {
+    if (!this.physics.active) return;
+    this.physics.drive(on ? "range-pingpong" : "off", periodS);
   }
 
   /** Exploded view: slide each part radially out from the assembly center by
@@ -412,6 +425,7 @@ export class CadViewer {
 
   stopPhysics(): void {
     if (this.physics.active) this.physics.stop();
+    this.flashLeaves([], "#f85149"); // clear any lingering contact flash
     if (!this.disposed) this.setPicking(true);
     this.requestRender();
   }

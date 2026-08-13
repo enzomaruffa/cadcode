@@ -15,6 +15,7 @@ export function Viewport() {
 
   const [grid, setGrid] = useState<"off" | "floor" | "walls">("floor");
   const [physics, setPhysics] = useState(false);
+  const [playingJoints, setPlayingJoints] = useState(false); // joint drive sweeping declared ranges
   const [explode, setExplode] = useState(0); // exploded-view spread (0–1)
   const [dims, setDims] = useState<[number, number, number] | null>(null); // model W×D×H chip
 
@@ -25,6 +26,7 @@ export function Viewport() {
   const presentation = useStore((s) => s.presentation);
   const physical = useStore((s) => s.physical);
   const joints = useStore((s) => s.joints);
+  const hasDrive = joints.some((j) => j.range && (j.kind === "revolute" || j.kind === "prismatic"));
   const simFrames = useStore((s) => s.simFrames);
   const simFrame = useStore((s) => s.simFrame);
   const simPlaying = useStore((s) => s.simPlaying);
@@ -202,11 +204,27 @@ export function Viewport() {
         >
           <button
             className={physics ? "on" : ""}
-            onClick={() => setPhysics((p) => !p)}
+            onClick={() => {
+              setPhysics((p) => !p);
+              setPlayingJoints(false);
+            }}
             title="Toggle gravity + drag playground"
           >
             {physics ? "◼ physics" : "▶ physics"}
           </button>
+          {physics && hasDrive && (
+            <button
+              className={playingJoints ? "on" : ""}
+              onClick={() => {
+                const next = !playingJoints;
+                setPlayingJoints(next);
+                viewerRef.current?.playJoints(next);
+              }}
+              title="Sweep every ranged joint through its declared range — contacts flash red"
+            >
+              {playingJoints ? "◼ play joints" : "▶ play joints"}
+            </button>
+          )}
           {physics && (
             <button onClick={() => viewerRef.current?.resetPhysics()} title="Drop parts back to their code positions">
               reset

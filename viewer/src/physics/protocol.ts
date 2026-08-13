@@ -45,8 +45,21 @@ export interface InitMsg {
   density: number; // mass per unit volume
 }
 
+// Drive every ranged revolute/prismatic joint through its declared range as a
+// time-based triangle wave (Rapier 0.19 has no joint-angle getter, so the
+// target is derived from the clock, not from feedback). "off" restores free
+// articulation. Phase-5 seam: an eventual particle tier extends InitMsg with
+// emitters and FrameMsg with a `particles: Float32Array` — same worker, second
+// fixed-rate loop against the already-shipped voxel colliders.
+export interface DriveMsg {
+  type: "drive";
+  mode: "range-pingpong" | "off";
+  period_s?: number; // full down-up-down cycle, default 4s
+}
+
 export type InMsg =
   | InitMsg
+  | DriveMsg
   | { type: "grab"; index: number; pivot: [number, number, number] }
   | { type: "move"; point: [number, number, number] }
   | { type: "release" }
@@ -56,6 +69,9 @@ export type InMsg =
 export interface FrameMsg {
   type: "frame";
   transforms: Float32Array; // 7 per body
+  // Body-index pairs currently in contact (part↔part only, jointed pairs and the
+  // ground excluded). Attached only on frames where the active set CHANGED.
+  contacts?: Int32Array;
 }
 export interface ReadyMsg {
   type: "ready";

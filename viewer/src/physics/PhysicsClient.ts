@@ -21,6 +21,8 @@ interface Tracked {
 
 export class PhysicsClient {
   active = false;
+  /** Leaf ids of parts currently in part↔part contact — set on every change. */
+  onContacts: ((leafIds: string[]) => void) | null = null;
   private worker: Worker | null = null;
   private tracked: Tracked[] = [];
   private raycaster = new THREE.Raycaster();
@@ -121,12 +123,25 @@ export class PhysicsClient {
       this.tracked[i].leaf.group.position.set(t[o], t[o + 1], t[o + 2]);
       this.tracked[i].leaf.group.quaternion.set(t[o + 3], t[o + 4], t[o + 5], t[o + 6]);
     }
+    if (m.contacts && this.onContacts) {
+      const ids = new Set<string>();
+      for (const bi of m.contacts) {
+        const leaf = this.tracked[bi]?.leaf;
+        if (leaf) ids.add(leaf.group.name.replaceAll("|", "/"));
+      }
+      this.onContacts([...ids]);
+    }
     this.requestDraw();
   }
 
   /** Drop every part back to its code-truth pose, at rest. */
   reset(): void {
     this.post({ type: "reset" });
+  }
+
+  /** Drive every ranged joint through its declared range (or stop driving). */
+  drive(mode: "range-pingpong" | "off", periodS = 4): void {
+    this.post({ type: "drive", mode, period_s: periodS });
   }
 
   /** Per-part delta from the code pose to the CURRENT (settled/dragged) pose, as
