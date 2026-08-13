@@ -118,6 +118,7 @@ dependencies = [
     { name = "gitpython" },
     { name = "ocp-tessellate" },
     { name = "pydantic" },
+    { name = "scipy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -144,6 +145,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["anthropic", "google", "openai"], marker = "extra == 'agent'", specifier = ">=2.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "scipy", specifier = ">=1.10" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]

@@ -28,7 +28,7 @@ SOURCE_FILENAME = "<cad-source>"
 _MISSING = object()
 # Ambient DSL names bound on builtins during a run (variables, so ruff B010
 # stays quiet): parts are imported as modules and wouldn't otherwise see them.
-_AMBIENT = ("require", "print_hint", "require_motion", "turn", "slide", "screw")
+_AMBIENT = ("require", "print_hint", "require_motion", "turn", "slide", "screw", "flow_port", "require_flow")
 # Soft wall-clock budget for one require_motion sweep. The scratch buffer runs
 # under a 10 s SIGALRM, so a runaway sweep must fail its spec before the whole
 # run gets killed; project verify has no alarm and simply honors the same cap.
@@ -193,6 +193,66 @@ def _make_namespace(
         )
         return passed
 
+    ports: list[dict[str, Any]] = []
+    flow_checks: list[dict[str, Any]] = []
+
+    def flow_port(target: Any = None, kind: str = "inlet", label: str = "", *, point: Any = None) -> Any:
+        """Declare where liquid ENTERS or must LEGITIMATELY EXIT the assembly:
+        ``flow_port(face, kind="inlet")`` / ``flow_port(exit_face, kind="outlet")``
+        (a Face, a list of Faces, or ``point=(x,y,z)`` as an escape hatch).
+        Consumed by ``require_flow``; a no-op otherwise. Returns target."""
+        p: dict[str, Any] = {"kind": kind, "label": label}
+        if point is not None:
+            p["point"] = (float(point[0]), float(point[1]), float(point[2]))
+        elif target is not None:
+            faces = list(target) if hasattr(target, "__iter__") else [target]
+            p["faces"] = [f for f in faces if hasattr(f, "normal_at")]
+        ports.append(p)
+        return target
+
+    def require_flow(
+        min_gap: float = 0.3,
+        region: Any = None,
+        max_leak_cells: int = 0,
+        label: str = "",
+        objs: Any = None,
+    ) -> bool:
+        """A leak spec: flood-fill the void between the declared flow_ports and
+        require every escape to be a declared outlet. ``min_gap`` is the finest
+        channel treated as a flow path — anything narrower counts as sealed
+        (capillary films are out of scope). ``objs`` overrides the checked solids
+        (default: everything shown) — use it to test a WORST-CASE pose like a
+        joint sagged by its play, without rendering that pose. Not CFD."""
+        from app.kernel.flow import flow_check
+
+        fixed = list(objs) if objs is not None else [o for o, _n, _c, _m in shown]
+        inlets = [p for p in ports if p["kind"] == "inlet"]
+        outlets = [p for p in ports if p["kind"] == "outlet"]
+        try:
+            res = flow_check(
+                fixed, inlets, outlets, min_gap=float(min_gap), region=region, max_leak_cells=int(max_leak_cells)
+            )
+        except Exception as exc:  # noqa: BLE001 — a broken check is a failed spec, not a crashed render
+            specs.append({"passed": False, "message": f"{label or 'flow check'}: {type(exc).__name__}: {exc}"})
+            return False
+        passed = bool(res["passed"])
+        msg = label or "flow check"
+        if not passed or not label:
+            msg = f"{msg}: {res['reason']}"
+        specs.append({"passed": passed, "message": msg})
+        flow_checks.append(
+            {
+                "label": label or f"flow {len(flow_checks) + 1}",
+                "passed": passed,
+                "reason": res.get("reason"),
+                "leaked_cells": res.get("leaked_cells", 0),
+                "leak_points": res.get("leak_points", []),
+                "reaches_outlet": res.get("reaches_outlet", False),
+                "cell": res.get("cell"),
+            }
+        )
+        return passed
+
     hints: list[dict[str, Any]] = []
 
     def print_hint(target: Any = None, *, flow: Any = None, cosmetic: bool = False, **_kw: Any) -> Any:
@@ -228,9 +288,12 @@ def _make_namespace(
         "turn": _motion_paths.turn,
         "slide": _motion_paths.slide,
         "screw": _motion_paths.screw,
+        "flow_port": flow_port,
+        "require_flow": require_flow,
         "print_hint": print_hint,
         "__print_hints__": hints,  # planner reads collected hints from here
         "__motion_sweeps__": sweeps,  # run_source resolves leaf ids + serializes
+        "__flow_checks__": flow_checks,  # JSON-safe already; run_source attaches
         # Motion-sim clearance (plan §7): defined so a script's
         # `require(min_clearance_through_motion >= CLEARANCE)` runs (and passes)
         # in the normal technical render; the sim re-execs with the real value.
@@ -414,7 +477,16 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
         rec["moving"] = obj_to_leaf.get(id(sw.get("moving_obj")))
         motion.append(rec)
 
-    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs, joints=joints, motion=motion)
+    return RunResult.success(
+        shapes,
+        states,
+        bbox,
+        stdout=buf.getvalue(),
+        specs=specs,
+        joints=joints,
+        motion=motion,
+        flow=list(ns.get("__flow_checks__") or []),
+    )
 
 
 def run_source_lean(source: str) -> dict:

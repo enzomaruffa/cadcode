@@ -65,6 +65,21 @@ require_motion(nozzle, slide((0, 0, 1), 8), against=[funnel],
 
 Paths are world-frame about the origin (`turn`/`slide`/`screw`, or any `t -> Location`); the moving part is swept as a located copy, never mutated. A detent that must snap past gets its interference budget via `max_contact` (mm³). Endpoint checks (`inserts free`, `cannot pull out`) stay as plain boolean `require`s.
 
+## Leak-proofs — `require_flow` for anything that carries liquid
+
+```python
+flow_port(point=(0, 0, 25), kind="inlet")     # or a Face / list of Faces
+flow_port(point=(0, 0, tip_z), kind="outlet")
+require_flow(min_gap=0.3, region=((-25, -25, tip_z), (25, 25, 25)),
+             label="liquid only leaves through the tip", objs=[funnel, sagged_nozzle])
+```
+
+Void-connectivity flood fill, not CFD: any void path from an inlet that escapes somewhere other than a declared outlet fails the spec, with the exit points reported. Rules learned the hard way:
+
+- **Check the WORST-CASE pose, not nominal.** Nominal CAD kisses shut (0-gap faces seal topologically); real joints hang at their play. Sag the mated part by the joint's vertical slop (e.g. `Pos(0,0,-2*BAYO_FIT) * nozzle`) via `objs=[...]` — the v1 funnel's leak only reproduces sagged.
+- `min_gap` seals channels ≤ itself (capillary assumption); a channel is only GUARANTEED open from ~2×`min_gap`, so probe a suspect gap with `min_gap` ≤ half its width.
+- Pass a `region` bracketing the joint — whole-device grids blow the cell cap, and the spec fails loudly telling you so.
+
 ## Modular/grid systems
 
 Compute mating features in GRID space, not box space: exterior = `n*UNIT - GAP` centered in its grid region, and every foot/slot/groove positioned per grid cell — that's what makes cross-size combinations (a 2×1 onto two 1×1s) register. Same-footprint nesting is impossible with vertical walls; the honest capacity is (W−1)×(D−1) units inside — encode it as a spec, don't pretend otherwise.

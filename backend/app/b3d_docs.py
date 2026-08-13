@@ -98,6 +98,32 @@ _DSL: dict[str, dict[str, Any]] = {
             {"name": "pitch", "default": "2.0"},
         ],
     },
+    "flow_port": {
+        "kind": "function",
+        "signature": "flow_port(target=None, kind='inlet', label='', *, point=None)",
+        "doc": "Declare where liquid enters (`kind='inlet'`) or must legitimately exit (`kind='outlet'`) the assembly "
+        "— a Face, list of Faces, or `point=(x,y,z)`. Consumed by require_flow; a no-op otherwise. Returns target.",
+        "params": [
+            {"name": "target", "default": "None"},
+            {"name": "kind", "default": "'inlet'"},
+            {"name": "label", "default": "''"},
+            {"name": "point", "default": "None"},
+        ],
+    },
+    "require_flow": {
+        "kind": "function",
+        "signature": "require_flow(min_gap=0.3, region=None, max_leak_cells=0, label='')",
+        "doc": "Leak spec: flood-fill the void between the declared flow_ports and require every escape to be a "
+        "declared outlet. `min_gap` is the finest channel treated as a flow path (narrower = sealed; capillary films "
+        "are out of scope). `region=((x0,y0,z0),(x1,y1,z1))` bounds the check; the default wraps the ports. "
+        "Deterministic voxel connectivity, not CFD.",
+        "params": [
+            {"name": "min_gap", "default": "0.3"},
+            {"name": "region", "default": "None"},
+            {"name": "max_leak_cells", "default": "0"},
+            {"name": "label", "default": "''"},
+        ],
+    },
     "Range": {
         "kind": "class",
         "signature": "Range(min, max)",

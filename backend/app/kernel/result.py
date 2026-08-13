@@ -23,6 +23,7 @@ class RunResult:
     specs: list[dict[str, Any]] = field(default_factory=list)
     joints: list[dict[str, Any]] = field(default_factory=list)
     motion: list[dict[str, Any]] = field(default_factory=list)
+    flow: list[dict[str, Any]] = field(default_factory=list)
     stdout: str = ""
     # failure payload
     error: str | None = None
@@ -41,6 +42,7 @@ class RunResult:
         specs: list | None = None,
         joints: list | None = None,
         motion: list | None = None,
+        flow: list | None = None,
         stdout: str = "",
     ) -> RunResult:
         return cls(
@@ -53,6 +55,7 @@ class RunResult:
             specs=specs or [],
             joints=joints or [],
             motion=motion or [],
+            flow=flow or [],
             stdout=stdout,
         )
 
@@ -71,6 +74,7 @@ class RunResult:
             "specs": self.specs,
             "joints": self.joints,
             "motion": self.motion,
+            "flow": self.flow,
             "stdout": self.stdout,
             "error": self.error,
             "traceback": self.traceback,
@@ -89,6 +93,7 @@ class RunResult:
             specs=d.get("specs", []),
             joints=d.get("joints", []),
             motion=d.get("motion", []),
+            flow=d.get("flow", []),
             stdout=d.get("stdout", ""),
             error=d.get("error"),
             traceback=d.get("traceback", ""),
