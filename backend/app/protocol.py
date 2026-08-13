@@ -122,6 +122,9 @@ class GeometryPayload(BaseModel):
     # assembly joint graph (build123d Joints) → physics constraints; drives the
     # articulated playground (grab a lever, linked parts move on their real axes)
     joints: list[dict[str, Any]] = Field(default_factory=list)
+    # require_motion sweep records (per-pose transforms + contact) — the viewer
+    # scrubs these in motion mode without a kernel round-trip
+    motion: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SimulationPayload(BaseModel):

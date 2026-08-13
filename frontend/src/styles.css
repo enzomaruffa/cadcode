@@ -2653,6 +2653,16 @@ textarea {
   color: var(--accent);
   border-color: var(--accent);
 }
+.sweep-select {
+  width: 100%;
+  padding: 2px var(--sp-1);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+}
 .plate-bed {
   fill: var(--bg-elev);
   stroke: var(--border);

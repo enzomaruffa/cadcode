@@ -33,6 +33,7 @@ import {
   type GeometryPayload,
   type HistoryPayload,
   type MeasurementPayload,
+  type MotionSweep,
   type Param,
   type PhysicalPayload,
   type SelectKind,
@@ -97,6 +98,9 @@ interface StoreState {
   specs: Spec[];
   params: Param[];
   joints: RawJoint[]; // assembly joint graph → articulated physics playground
+  motionSweeps: MotionSweep[]; // require_motion records — scrubbable without a kernel round-trip
+  activeSweep: number;
+  simKind: "simulate" | "sweep"; // what the playback frames came from (readout units differ)
   viewMode: ViewMode;
   buildAxis: "Z" | "X" | "Y";
   printStats: { faces: number; needs_support: number; build_axis: string; limit: number } | null;
@@ -148,6 +152,7 @@ interface StoreState {
   setParam: (line: number, name: string, value: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setSimFrame: (frame: number) => void;
+  setActiveSweep: (i: number) => void;
   toggleSimPlay: () => void;
   setBuildAxis: (axis: "Z" | "X" | "Y") => void;
   setActiveLine: (line: number | null) => void;
@@ -166,7 +171,7 @@ interface StoreState {
   setActiveProject: (project: string | null) => void;
   syncProjectDoc: (project: string, kind: string, name: string, source: string) => void;
   renameProjectDoc: (project: string, kind: string, oldName: string, newName: string, source: string) => void;
-  renderShapes: (shapes: TessShapes | null, specs: Spec[]) => void;
+  renderShapes: (shapes: TessShapes | null, specs: Spec[], joints?: RawJoint[], motion?: MotionSweep[]) => void;
   setProjectPatch: (patch: {
     project: string;
     rationale: string;
@@ -189,6 +194,29 @@ function send(type: string, payload: Record<string, unknown>) {
 }
 
 type Origin = { project: string; kind: string; name: string };
+
+// A require_motion sweep re-shaped into playback frames — SimFrame-compatible,
+// so SimulationPlayback/Viewport scrub it exactly like a simulate() result.
+// `min_clearance` carries -contact (negative = touching), matching the sim
+// convention that below-zero flashes the collision color.
+function sweepFrames(sw: MotionSweep): SimFrame[] {
+  if (!sw.moving) return [];
+  return sw.poses.map((po) => ({
+    t: po.t,
+    transforms: { [sw.moving as string]: po.pose },
+    colliding: po.contact_mm3 > sw.max_contact ? [sw.moving as string] : [],
+    min_clearance: -po.contact_mm3,
+  }));
+}
+
+function sweepSummary(sw: MotionSweep): SimSummary {
+  return {
+    n_frames: sw.poses.length,
+    worst_clearance: -sw.worst_contact,
+    min_clearance_through_motion: -sw.worst_contact,
+    collision_frames: sw.poses.flatMap((po, i) => (po.contact_mm3 > sw.max_contact ? [i] : [])),
+  };
+}
 
 function originRelPath(o: Origin): string {
   return o.kind === "project" ? "project.py" : `${o.kind}s/${o.name}.py`;
@@ -241,11 +269,13 @@ async function runProjectDoc(origin: Origin, source: string) {
       shapes?: TessShapes;
       specs?: Spec[];
       params?: Param[];
+      joints?: RawJoint[];
+      motion?: MotionSweep[];
       error?: string;
       error_line?: number | null;
     } = await r.json();
     if (d.ok && d.shapes) {
-      useStore.getState().renderShapes(d.shapes, d.specs ?? []);
+      useStore.getState().renderShapes(d.shapes, d.specs ?? [], d.joints ?? [], d.motion ?? []);
       useStore.setState({ params: d.params ?? [] }); // sliders for the edited project file
     } else if (d.ok) {
       useStore.setState({ error: null, runState: "ok", params: d.params ?? [] }); // ran, no geometry (project.py)
@@ -304,6 +334,9 @@ export const useStore = create<StoreState>()(
       specs: [],
       params: [],
       joints: [],
+      motionSweeps: [],
+      activeSweep: 0,
+      simKind: "simulate",
       viewMode: "technical",
       buildAxis: "Z",
       printStats: null,
@@ -391,6 +424,10 @@ export const useStore = create<StoreState>()(
                 specs: p.stale ? s.specs : incomingMode === "technical" ? (p.specs ?? []) : s.specs,
                 params: p.stale ? s.params : incomingMode === "technical" ? (p.params ?? []) : s.params,
                 joints: p.stale ? s.joints : ((p.joints as RawJoint[] | undefined) ?? []),
+                motionSweeps:
+                  p.stale || incomingMode !== "technical"
+                    ? s.motionSweeps
+                    : ((p.motion as MotionSweep[] | undefined) ?? []),
                 printStats:
                   incomingMode === "printability"
                     ? ((p.print_stats as unknown as StoreState["printStats"]) ?? null)
@@ -411,8 +448,11 @@ export const useStore = create<StoreState>()(
                 // Re-derive the readout on every edit while physical mode is open.
                 send(SET_MODE, { mode: "physical" });
               } else if (vm === "motion" && incomingMode === "technical") {
-                // Re-sweep the mechanism on every edit while motion mode is open.
-                send(SET_MODE, { mode: "motion" });
+                // Re-sweep on every edit while motion mode is open: fresh
+                // require_motion records re-synthesize locally; scratch buffers
+                // without sweeps re-run the kernel simulate op.
+                if (get().motionSweeps.length > 0) get().setActiveSweep(get().activeSweep);
+                else send(SET_MODE, { mode: "motion" });
               }
               break;
             }
@@ -458,6 +498,7 @@ export const useStore = create<StoreState>()(
             case SIMULATION: {
               const p = env.payload as unknown as SimulationPayload;
               set({
+                simKind: "simulate",
                 simFrames: p.frames ?? [],
                 simSummary: p.summary ?? null,
                 simSpecs: p.specs ?? [],
@@ -581,12 +622,36 @@ export const useStore = create<StoreState>()(
         if (mode === "printability") send(SET_MODE, { mode: "printability", build_axis: get().buildAxis });
         else if (mode === "highlight") send(SET_MODE, { mode: "highlight" });
         else if (mode === "physical") send(SET_MODE, { mode: "physical" });
-        else if (mode === "motion") send(SET_MODE, { mode: "motion" });
-        else {
+        else if (mode === "motion") {
+          // require_motion sweeps scrub locally (works for project docs, which
+          // have no kernel session); a scratch buffer without sweeps falls back
+          // to the kernel's motion(t) simulate op.
+          const sweeps = get().motionSweeps;
+          if (sweeps.length > 0) get().setActiveSweep(get().activeSweep);
+          else send(SET_MODE, { mode: "motion" });
+        } else {
           set({ printStats: null });
           send(SET_MODE, { mode: "technical" });
         }
       },
+
+      setActiveSweep: (i) =>
+        set((s) => {
+          const sweeps = s.motionSweeps;
+          if (!sweeps.length) return {};
+          const idx = Math.max(0, Math.min(i, sweeps.length - 1));
+          const sw = sweeps[idx];
+          const frames = sweepFrames(sw);
+          return {
+            activeSweep: idx,
+            simKind: "sweep",
+            simFrames: frames,
+            simFrame: 0,
+            simPlaying: frames.length > 1,
+            simSummary: sweepSummary(sw),
+            simSpecs: [],
+          };
+        }),
 
       setSimFrame: (frame) =>
         set((s) => {
@@ -695,12 +760,14 @@ export const useStore = create<StoreState>()(
                 : s.runTarget,
           };
         }),
-      renderShapes: (shapes, specs) =>
+      renderShapes: (shapes, specs, joints = [], motion = []) =>
         set((s) => ({
           shapes,
           geometryRev: s.geometryRev + 1,
           specs,
-          joints: [],
+          joints,
+          motionSweeps: motion,
+          activeSweep: 0,
           stale: false,
           error: null,
           runState: "ok",

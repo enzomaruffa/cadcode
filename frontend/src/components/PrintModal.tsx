@@ -188,8 +188,7 @@ function Plate3D({ shapes, plateIdx, nPlates }: { shapes: TessShapes; plateIdx: 
   const filtered = useMemo(() => {
     if (nPlates <= 1) return shapes;
     const prefix = `plate${plateIdx + 1}_`;
-    const walk = (p: TessPart): TessPart =>
-      p.parts ? { ...p, parts: p.parts.filter(keep).map(walk) } : p;
+    const walk = (p: TessPart): TessPart => (p.parts ? { ...p, parts: p.parts.filter(keep).map(walk) } : p);
     const keep = (p: TessPart): boolean => (p.parts ? true : (p.name ?? "").startsWith(prefix));
     return { ...shapes, parts: shapes.parts.filter(keep).map(walk), bb: null };
   }, [shapes, plateIdx, nPlates]);

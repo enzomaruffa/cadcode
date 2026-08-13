@@ -13,6 +13,7 @@ export function PrintabilityToggle() {
   // The diagnostic modes run through the single-buffer kernel; they don't apply
   // to a project file (rendered by the project runner). Disable them there.
   const isProjectFile = useStore((s) => !!s.docs.find((d) => d.id === s.activeDocId)?.origin);
+  const hasSweeps = useStore((s) => s.motionSweeps.length > 0);
   const diagTitle = isProjectFile
     ? "Not available for project files yet — open a standalone part to use this"
     : undefined;
@@ -50,8 +51,12 @@ export function PrintabilityToggle() {
         <button
           className={viewMode === "motion" ? "on" : ""}
           onClick={() => setViewMode("motion")}
-          disabled={isProjectFile}
-          title={diagTitle}
+          disabled={isProjectFile && !hasSweeps}
+          title={
+            isProjectFile && !hasSweeps
+              ? "Add a require_motion(...) spec to this scene to scrub its sweep here"
+              : undefined
+          }
         >
           motion
         </button>
