@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CadCanvas, type TessPart } from "@cadcode/viewer";
 import { HTTP_URL } from "../config";
 import type { Spec, TessShapes } from "../lib/protocol";
 import { useStore } from "../lib/store";
@@ -179,6 +180,30 @@ function PartThumb({ project, name }: { project?: string; name: string }) {
   );
 }
 
+// Orbitable 3D view of ONE plate, cut out of the arranged layout the plan
+// already tessellated — multi-plate layouts prefix every leaf name with
+// `plate{N}_`, so filtering the shapes tree by that prefix isolates a plate
+// without any extra server work.
+function Plate3D({ shapes, plateIdx, nPlates }: { shapes: TessShapes; plateIdx: number; nPlates: number }) {
+  const filtered = useMemo(() => {
+    if (nPlates <= 1) return shapes;
+    const prefix = `plate${plateIdx + 1}_`;
+    const walk = (p: TessPart): TessPart =>
+      p.parts ? { ...p, parts: p.parts.filter(keep).map(walk) } : p;
+    const keep = (p: TessPart): boolean => (p.parts ? true : (p.name ?? "").startsWith(prefix));
+    return { ...shapes, parts: shapes.parts.filter(keep).map(walk), bb: null };
+  }, [shapes, plateIdx, nPlates]);
+  return (
+    <CadCanvas
+      className="plate-3d"
+      shapes={filtered}
+      geometryRev={1}
+      renderProfile="presentation"
+      interactive={false}
+    />
+  );
+}
+
 // Top-down 2D map of one plate: the bed rectangle with every part's footprint
 // placed on it (bed-local mm, y flipped for screen). Shows the packing at a
 // glance without leaving the modal for the 3D viewport.
@@ -243,12 +268,14 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
   const [strategy, setStrategy] = useState<Strategy>("material");
   const [supports, setSupports] = useState(true); // auto-add support material where overhangs need it
   const [probe, setProbe] = useState(false); // ground-truth orientations with the real slicer (slow, exact)
+  const probeTouched = useRef(false); // user made an explicit probe choice — never auto-override it
   const [orients, setOrients] = useState<Record<string, string>>({}); // per-part orientation override
   const [openOrient, setOpenOrient] = useState<Record<string, boolean>>({}); // expanded orientation gallery per part
   const [orientThumbs, setOrientThumbs] = useState<Record<string, Record<string, string>>>({}); // partKey → {label: svg}
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [plate3d, setPlate3d] = useState<Record<number, boolean>>({}); // per-plate 2D map ⇄ orbitable 3D
   // Exact slicer results (time + filament), keyed by plate index (-1 = whole single plate).
   const [exact, setExact] = useState<Record<number, SliceResult | "working">>({});
   const [calN, setCalN] = useState(0); // how many real slices the estimator learned from
@@ -454,6 +481,10 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
         setPlan(d);
         setExact({});
         renderShapes(d.shapes, []); // show the arranged plate in the viewport
+        // The server has a real slicer → ground-truth orientations by default.
+        // Flipping `probe` re-plans via its effect; the user's own toggle always
+        // wins once touched.
+        if (d.slicer && !probe && !probeTouched.current) setProbe(true);
         // Auto-run the real slicer per plate in the background → the "~" estimates
         // get replaced with exact numbers. A new plan bumps the token so stale
         // slices are dropped.
@@ -548,6 +579,15 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
     void doPlan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orients]);
+
+  // Flipping ground-truth re-ranks orientations, so it re-plans the same way
+  // (including the auto-enable when the first plan reports a server slicer).
+  const probeRev = useRef(0);
+  useEffect(() => {
+    if (probeRev.current++ === 0 || !plan) return;
+    void doPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probe]);
 
   // Download a file from a print endpoint (export → STL/3MF; gcode → sliced,
   // ready-to-print G-code). `busyKey` shows a spinner on the invoking button.
@@ -810,8 +850,11 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
             )}
             <button
               className={probe ? "on" : ""}
-              onClick={() => setProbe((p) => !p)}
-              title="Ground truth: really slice the top orientation candidates (tree supports and all) and rank by the slicer's actual support grams. Slow — seconds per part — but exact."
+              onClick={() => {
+                probeTouched.current = true;
+                setProbe((p) => !p);
+              }}
+              title="Ground truth: really slice the top orientation candidates (tree supports and all) and rank by the slicer's actual support grams. Slow — seconds per part — but exact. On by default when the server has a slicer."
             >
               🎯 ground truth
             </button>
@@ -938,7 +981,7 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                         {s.swapped_to_fit ? " · ↻ re-oriented to save a plate" : ""}
                       </span>
                     </div>
-                    {cands.length > 1 && (
+                    {(cands.length > 1 || forced) && (
                       <>
                         <button
                           className="orient-toggle"
@@ -1024,10 +1067,21 @@ export function PrintModal({ onClose }: { onClose: () => void }) {
                 <div className="plate-previews">
                   {plan.plates?.map((p) => (
                     <div className="plate-card" key={p.index}>
-                      <PlatePreview plate={p} />
+                      {plate3d[p.index] && plan.shapes ? (
+                        <Plate3D shapes={plan.shapes} plateIdx={p.index} nPlates={plan.plates?.length ?? 1} />
+                      ) : (
+                        <PlatePreview plate={p} />
+                      )}
                       <div className="plate-cap">
                         {(plan.plates?.length ?? 1) > 1 ? `plate ${p.index + 1} · ` : ""}
                         {p.w}×{p.d} mm
+                        <button
+                          className={`plate-3d-toggle${plate3d[p.index] ? " on" : ""}`}
+                          onClick={() => setPlate3d((m) => ({ ...m, [p.index]: !m[p.index] }))}
+                          title="Toggle an orbitable 3D view of this plate"
+                        >
+                          {plate3d[p.index] ? "2D" : "3D"}
+                        </button>
                       </div>
                     </div>
                   ))}

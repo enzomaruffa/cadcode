@@ -253,6 +253,13 @@ def support_area(verts: np.ndarray, tris: np.ndarray) -> float:
     return float(areas[_overhang_mask(normals, centroids, float(verts[:, 2].min()))].sum())
 
 
+def support_volume(verts: np.ndarray, tris: np.ndarray) -> float:
+    """Support LATTICE volume proxy (mm³): overhang footprint × drop to the bed.
+    The honest ranking currency — a floor ring hovering 2.5 mm up costs a dusting
+    of support however large its area, while the same area 100 mm up is a forest."""
+    return _support_volume(verts, tris, 1.0)
+
+
 def bed_contact_area(verts: np.ndarray, tris: np.ndarray, tol: float = 0.4) -> float:
     """Flat area actually touching the bed (mm²) — a downward-facing face sitting
     within `tol` of the lowest point. This is the real adhesion/stability proxy:

@@ -181,17 +181,18 @@ def _orient(
         rotation_to_down,
         support_area,
         support_cost,
+        support_volume,
     )
 
     prof = None if supports else {"support_density": 0.0}
     verts, tris = mesh_of(obj)
     occ = build_occupancy(verts, tris)
 
+    # A forced orientation overrides the SELECTION, never the evaluation: the full
+    # candidate field still gets scored so the compare-&-choose gallery (and the
+    # way back to auto) survives the override.
     candidates = candidate_down_dirs()
-    if force and force != "auto":
-        forced = [c for c in candidates if c[0] == force]
-        if forced:
-            candidates = forced
+    forced_label = force if force and force != "auto" and any(c[0] == force for c in candidates) else None
 
     # Phase 1 — cheap metrics for every candidate.
     metas: list[dict] = []
@@ -205,6 +206,7 @@ def _orient(
         w = float(v[:, 0].max() - v[:, 0].min())
         d = float(v[:, 1].max() - v[:, 1].min())
         area_overhang = support_area(v, tris)
+        sup_vol = support_volume(v, tris)
         contact = bed_contact_area(v, tris)
         tilt = _nearest_principal_tilt(dvec)
         unfit = 0
@@ -224,6 +226,7 @@ def _orient(
                 "d": d,
                 "footprint": w * d,
                 "overhang": float(area_overhang),
+                "sup_vol": float(sup_vol),
                 "contact": float(contact),
                 "tilt": tilt,
                 "unfit": unfit,
@@ -236,20 +239,29 @@ def _orient(
             }
         )
 
-    # Tippiness penalty: a part balanced on a tiny contact patch is a bad print
-    # however little support it needs. Expressed in the same units as the metric
-    # it's added to, so it nudges without dominating a real difference.
-    _CONTACT_OK = 120.0  # mm² of flat bed contact considered "solidly planted"
+    # Stability: how much flat bed contact this part NEEDS scales with its size —
+    # 60 mm² plants a clip, but a 150 mm funnel balanced on 100 mm² is a tip-over.
+    # Below the need, the orientation is "balancing on an edge" and loses to any
+    # stable one before material is even considered (a hard tier, like bed-fit).
+    _CONTACT_MIN = 60.0
+
+    def _stable_need(m: dict) -> float:
+        return max(_CONTACT_MIN, 0.04 * float(m["footprint"]))
+
+    def unstable(m: dict) -> int:
+        return int(float(m["contact"]) < _stable_need(m))
 
     def tippy(m: dict) -> float:
-        return max(0.0, _CONTACT_OK - float(m["contact"]))
+        return max(0.0, _stable_need(m) - float(m["contact"]))
 
-    # Cheap heuristic support score used when we CAN'T slice: raw overhang area is
-    # the honest predictor (the enclosure penalty over-counts a shallow bore and
-    # used to bury the flat orientation), so it leads; enclosure is only a mild
-    # tiebreak, and tippiness is penalized so weird tilts don't sneak in.
+    # Cheap heuristic support score used when we CAN'T slice: support VOLUME
+    # (overhang footprint × drop height), not raw area — a floor ring hovering
+    # 2.5 mm over the bed is a dusting of support, not a disaster, and area-based
+    # ranking used to let absurd tilts "win" against it. Enclosure (removability)
+    # stays a mild multiplier.
     def heur(m: dict) -> float:
-        return float(m["overhang"]) + 1.5 * tippy(m) + 0.15 * max(0.0, float(m["cost"]) - float(m["overhang"]))
+        enclosure = max(0.0, float(m["cost"]) - float(m["overhang"])) / max(float(m["overhang"]), 1.0)
+        return float(m["sup_vol"]) * (1.0 + 0.15 * enclosure)
 
     # The evaluation set: EVERY bed-fitting principal (always — this is the fix)
     # plus the best heuristic tilts, deduped by resulting placement, capped.
@@ -258,7 +270,9 @@ def _orient(
 
     fitting = [m for m in metas if m["unfit"] == 0] or metas
     principals = [m for m in fitting if m["principal"]]
-    tilts = sorted((m for m in fitting if not m["principal"]), key=lambda m: (m["pen"], heur(m), m["height"]))
+    tilts = sorted(
+        (m for m in fitting if not m["principal"]), key=lambda m: (m["pen"], unstable(m), heur(m), m["height"])
+    )
     eval_set: list[dict] = []
     seen_sig: set[tuple] = set()
     for m in principals + tilts:
@@ -279,6 +293,14 @@ def _orient(
             keep_tilts += 1
         trimmed.append(m)
     eval_set = trimmed[:_PROBE_MAX]
+
+    # A forced orientation is always part of the evaluation (so it gets layer
+    # estimates and, with probe, real slicer numbers) even if the heuristic
+    # would have trimmed it.
+    if forced_label and not any(m["label"] == forced_label for m in eval_set):
+        fm = next((m for m in metas if m["label"] == forced_label), None)
+        if fm is not None:
+            eval_set.append(fm)
 
     # Phase 2 — instant layer-sliced minutes for the eval set.
     for m in eval_set:
@@ -332,25 +354,67 @@ def _orient(
             sup_metric = round(float(m["support_g"] or 0.0) + 0.04 * tippy(m), 1)
             time_metric = round(float(m["minutes"] or 0.0), 1)
         else:
-            sup_metric = round(heur(m), 1)  # heur already folds in tippiness
+            sup_metric = round(heur(m), 1)
             time_metric = round(float(m["est_min"] or 0.0), 1)
         if strategy == "plates":
-            return (m["unfit"], m["pen"], round(float(m["footprint"]), 1), sup_metric, *stable, time_metric)
+            return (
+                m["unfit"],
+                m["pen"],
+                unstable(m),
+                round(float(m["footprint"]), 1),
+                sup_metric,
+                *stable,
+                time_metric,
+            )
         if strategy == "fastest":
-            return (m["unfit"], m["pen"], time_metric, sup_metric, *stable)
-        return (m["unfit"], m["pen"], sup_metric, *stable, time_metric)  # material
+            return (m["unfit"], m["pen"], unstable(m), time_metric, sup_metric, *stable)
+        return (m["unfit"], m["pen"], unstable(m), sup_metric, *stable, time_metric)  # material
 
     eval_set.sort(key=rank_key)
     best = eval_set[0]
+
+    # Principal bias: a weird tilt has to EARN its weirdness. If the best flat-on-
+    # a-face orientation is within 25% of the tilt on the strategy's own currency
+    # (and no worse on bed-fit/hints/stability), print flat — flat prints pack
+    # tighter, adhere better, and look like something a human chose.
+    def strat_metric(m: dict) -> float:
+        if strategy == "plates":
+            return float(m["footprint"])
+        if strategy == "fastest":
+            return float(m["minutes"] if m["probed"] and m["minutes"] is not None else (m["est_min"] or 0.0))
+        if m["probed"] and m["support_g"] is not None:
+            return float(m["support_g"])
+        return heur(m)
+
+    if not best["principal"]:
+        peers = [
+            m
+            for m in eval_set
+            if m["principal"]
+            and m["probed"] == best["probed"]
+            and m["unfit"] == best["unfit"]
+            and m["pen"] <= best["pen"]
+            and unstable(m) <= unstable(best)
+        ]
+        if peers:
+            bp = min(peers, key=rank_key)
+            if strat_metric(bp) <= 1.25 * strat_metric(best) + 1e-9:
+                best = bp
+
     best["recommended"] = True
-    label, axis, angle = best["label"], best["axis"], best["angle"]
-    sup, minutes, best_v = best["overhang"], (best["minutes"] or best["est_min"] or 0.0), best["v"]
-    if best["probed"]:
+    chosen = best
+    if forced_label:
+        fm = next((m for m in eval_set if m["label"] == forced_label), None)
+        if fm is not None:
+            chosen = fm
+    label, axis, angle = chosen["label"], chosen["axis"], chosen["angle"]
+    sup, minutes, best_v = chosen["overhang"], (chosen["minutes"] or chosen["est_min"] or 0.0), chosen["v"]
+    if chosen["probed"]:
         probe_info = {
-            "support_g": best.get("support_g"),
-            "model_g": best.get("model_g"),
-            "minutes": best.get("minutes"),
-            "slicer": best.get("slicer"),
+            "support_g": chosen.get("support_g"),
+            "model_g": chosen.get("model_g"),
+            "minutes": chosen.get("minutes"),
+            "slicer": chosen.get("slicer"),
             "candidates": (probe_info or {}).get("candidates", 1),
         }
 

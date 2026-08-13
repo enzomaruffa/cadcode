@@ -2630,6 +2630,29 @@ textarea {
   width: 180px;
   height: 180px;
 }
+.plate-3d {
+  display: block;
+  width: 180px;
+  height: 180px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.plate-3d-toggle {
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.plate-3d-toggle.on,
+.plate-3d-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .plate-bed {
   fill: var(--bg-elev);
   stroke: var(--border);
