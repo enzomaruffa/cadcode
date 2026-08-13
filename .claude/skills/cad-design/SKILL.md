@@ -54,6 +54,17 @@ require(interf(lock_angle(), 2.0) > 3.0, "cannot pull straight out")
 
 Same pattern for stacking (registered = free, shifted 1mm = collides), clips (seated free, pulled = blocked), dividers. These are the specs that catch real design bugs — write them before polishing cosmetics.
 
+For the MOTION between the endpoints, prefer `require_motion` (ambient) over a hand-rolled loop — it sweeps the whole path, reports the worst pose, and the viewer can scrub it:
+
+```python
+require_motion(nozzle, turn("Z", 0, lock_angle()), against=[funnel],
+               max_contact=0.5, label="cup twists to lock without jamming")
+require_motion(nozzle, slide((0, 0, 1), 8), against=[funnel],
+               label="lifts straight off when unlocked")
+```
+
+Paths are world-frame about the origin (`turn`/`slide`/`screw`, or any `t -> Location`); the moving part is swept as a located copy, never mutated. A detent that must snap past gets its interference budget via `max_contact` (mm³). Endpoint checks (`inserts free`, `cannot pull out`) stay as plain boolean `require`s.
+
 ## Modular/grid systems
 
 Compute mating features in GRID space, not box space: exterior = `n*UNIT - GAP` centered in its grid region, and every foot/slot/groove positioned per grid cell — that's what makes cross-size combinations (a 2×1 onto two 1×1s) register. Same-footprint nesting is impossible with vertical walls; the honest capacity is (W−1)×(D−1) units inside — encode it as a spec, don't pretend otherwise.

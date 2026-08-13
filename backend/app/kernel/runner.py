@@ -20,6 +20,7 @@ import traceback as tb_mod
 from contextlib import contextmanager, redirect_stdout
 from typing import Any
 
+from app.kernel import motion as _motion_paths
 from app.kernel.result import RunResult
 from app.tessellate import tessellate
 
@@ -27,7 +28,11 @@ SOURCE_FILENAME = "<cad-source>"
 _MISSING = object()
 # Ambient DSL names bound on builtins during a run (variables, so ruff B010
 # stays quiet): parts are imported as modules and wouldn't otherwise see them.
-_AMBIENT = ("require", "print_hint")
+_AMBIENT = ("require", "print_hint", "require_motion", "turn", "slide", "screw")
+# Soft wall-clock budget for one require_motion sweep. The scratch buffer runs
+# under a 10 s SIGALRM, so a runaway sweep must fail its spec before the whole
+# run gets killed; project verify has no alarm and simply honors the same cap.
+_MOTION_BUDGET_S = 8.0
 
 
 @contextmanager
@@ -135,6 +140,59 @@ def _make_namespace(
         specs.append({"passed": passed, "message": message or "requirement"})
         return passed
 
+    sweeps: list[dict[str, Any]] = []
+
+    def require_motion(
+        moving: Any,
+        path: Any,
+        against: Any = None,
+        max_contact: float = 0.01,
+        poses: int = 12,
+        label: str = "",
+    ) -> bool:
+        """A kinematic spec: sweep ``moving`` along ``path`` (a `turn`/`slide`/
+        `screw` factory or any ``t → Location`` callable) and require the boolean
+        contact against the rest of the assembly to stay within ``max_contact``
+        mm³ at EVERY pose. ``against`` defaults to everything shown so far except
+        the moving part; a detent that must snap past gets its budget via
+        ``max_contact``. Records the sweep for the viewer to scrub."""
+        from app.kernel.motion import sweep_contact
+
+        if against is None:
+            fixed = [o for o, _n, _c, _m in shown if o is not moving]
+        elif hasattr(against, "__iter__"):
+            fixed = list(against)
+        else:
+            fixed = [against]
+        try:
+            res = sweep_contact(moving, fixed, path, poses=poses, budget_s=_MOTION_BUDGET_S)
+        except Exception as exc:  # noqa: BLE001 — a broken path is a failed spec, not a crashed render
+            specs.append({"passed": False, "message": f"{label or 'motion sweep'}: {type(exc).__name__}: {exc}"})
+            return False
+        worst, worst_t = res["worst_contact"], res["worst_t"]
+        if res["truncated"]:
+            passed = False
+            msg = f"{label or 'motion sweep'}: sweep truncated (time budget) — fewer poses or run via project verify"
+        else:
+            passed = worst <= max_contact
+            msg = label or f"motion sweep: worst contact {worst:.2f} mm³ at t={worst_t:.2f}"
+            if not passed and label:
+                msg = f"{label} (worst contact {worst:.2f} mm³ at t={worst_t:.2f}, budget {max_contact:g})"
+        specs.append({"passed": passed, "message": msg})
+        sweeps.append(
+            {
+                "label": label or f"sweep {len(sweeps) + 1}",
+                "moving_obj": moving,
+                "max_contact": float(max_contact),
+                "poses": res["poses"],
+                "worst_contact": worst,
+                "worst_t": worst_t,
+                "truncated": res["truncated"],
+                "passed": passed,
+            }
+        )
+        return passed
+
     hints: list[dict[str, Any]] = []
 
     def print_hint(target: Any = None, *, flow: Any = None, cosmetic: bool = False, **_kw: Any) -> Any:
@@ -166,8 +224,13 @@ def _make_namespace(
         "show": show,
         "show_object": show_object,
         "require": require,
+        "require_motion": require_motion,
+        "turn": _motion_paths.turn,
+        "slide": _motion_paths.slide,
+        "screw": _motion_paths.screw,
         "print_hint": print_hint,
         "__print_hints__": hints,  # planner reads collected hints from here
+        "__motion_sweeps__": sweeps,  # run_source resolves leaf ids + serializes
         # Motion-sim clearance (plan §7): defined so a script's
         # `require(min_clearance_through_motion >= CLEARANCE)` runs (and passes)
         # in the normal technical render; the sim re-execs with the real value.
@@ -341,7 +404,17 @@ def run_source(source: str, *, sandbox: bool = False) -> RunResult:
     except Exception:  # noqa: BLE001 - joints are a bonus; never fail a render over them
         joints = []
 
-    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs, joints=joints)
+    # Motion sweeps → JSON-safe records keyed to the tessellated leaves, so the
+    # viewer can scrub a require_motion path. The live object ref never leaves
+    # this process.
+    motion: list[dict[str, Any]] = []
+    obj_to_leaf = {id(obj): leaf_id for leaf_id, obj in zip(states.keys(), objs, strict=False)}
+    for sw in ns.get("__motion_sweeps__") or []:
+        rec = {k: v for k, v in sw.items() if k != "moving_obj"}
+        rec["moving"] = obj_to_leaf.get(id(sw.get("moving_obj")))
+        motion.append(rec)
+
+    return RunResult.success(shapes, states, bbox, stdout=buf.getvalue(), specs=specs, joints=joints, motion=motion)
 
 
 def run_source_lean(source: str) -> dict:

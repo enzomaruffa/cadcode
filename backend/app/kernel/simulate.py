@@ -20,17 +20,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.kernel.motion import loc_to_pose as _loc_to_pose
 from app.kernel.runner import run_scene
 
 MAX_FRAMES = 60
-
-
-def _loc_to_pose(loc: Any) -> list[list[float]]:
-    """A build123d ``Location`` → the viewer ``Loc`` ``[[x,y,z],[qx,qy,qz,qw]]``
-    (quaternion w-last, three.js order — matches ``gp_Quaternion`` directly)."""
-    p = loc.position
-    q = loc.wrapped.Transformation().GetRotation()
-    return [[p.X, p.Y, p.Z], [q.X(), q.Y(), q.Z(), q.W()]]
 
 
 def _pairwise(objs: list[Any], leaf_ids: list[str], eps: float) -> tuple[list[str], float]:

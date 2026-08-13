@@ -55,6 +55,49 @@ _DSL: dict[str, dict[str, Any]] = {
             {"name": "cosmetic", "default": "False"},
         ],
     },
+    "require_motion": {
+        "kind": "function",
+        "signature": "require_motion(moving, path, against=None, max_contact=0.01, poses=12, label='')",
+        "doc": "Kinematic spec: sweep `moving` along `path` (turn/slide/screw or any t→Location callable) and require "
+        "boolean contact with the rest of the assembly to stay within `max_contact` mm³ at every pose — e.g. "
+        "`require_motion(nozzle, turn('Z', 0, lock_angle()), against=[funnel], max_contact=0.5, label='twists to lock')`. "
+        "`against` defaults to everything shown so far except `moving`. A detent that must snap past gets its "
+        "interference budget via `max_contact`. The sweep is recorded for viewer scrubbing.",
+        "params": [
+            {"name": "moving"},
+            {"name": "path"},
+            {"name": "against", "default": "None"},
+            {"name": "max_contact", "default": "0.01"},
+            {"name": "poses", "default": "12"},
+            {"name": "label", "default": "''"},
+        ],
+    },
+    "turn": {
+        "kind": "function",
+        "signature": "turn(axis='Z', start_deg=0.0, end_deg=90.0)",
+        "doc": "Motion path: rotation about a world axis through the origin, for require_motion.",
+        "params": [
+            {"name": "axis", "default": "'Z'"},
+            {"name": "start_deg", "default": "0.0"},
+            {"name": "end_deg", "default": "90.0"},
+        ],
+    },
+    "slide": {
+        "kind": "function",
+        "signature": "slide(vector=(0,0,1), mm=10.0)",
+        "doc": "Motion path: straight translation along `vector` by `mm` at t=1, for require_motion.",
+        "params": [{"name": "vector", "default": "(0,0,1)"}, {"name": "mm", "default": "10.0"}],
+    },
+    "screw": {
+        "kind": "function",
+        "signature": "screw(axis='Z', deg=360.0, pitch=2.0)",
+        "doc": "Motion path: helix — rotate `deg` about the axis while advancing `pitch` mm per full turn.",
+        "params": [
+            {"name": "axis", "default": "'Z'"},
+            {"name": "deg", "default": "360.0"},
+            {"name": "pitch", "default": "2.0"},
+        ],
+    },
     "Range": {
         "kind": "class",
         "signature": "Range(min, max)",
