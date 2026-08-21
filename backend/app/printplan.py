@@ -351,7 +351,9 @@ def _orient(
         if m["probed"]:
             # real support grams, plus a small gram-equivalent tippiness nudge so a
             # marginally-lighter but tippy tilt can't beat a solidly flat print.
-            sup_metric = round(float(m["support_g"] or 0.0) + 0.04 * tippy(m), 1)
+            # TOTAL material: support plus the model itself, which is not constant
+            # across orientations (solid layers and infill shift with the pose).
+            sup_metric = round(float(m["support_g"] or 0.0) + float(m["model_g"] or 0.0) + 0.04 * tippy(m), 1)
             time_metric = round(float(m["minutes"] or 0.0), 1)
         else:
             sup_metric = round(heur(m), 1)
@@ -383,7 +385,7 @@ def _orient(
         if strategy == "fastest":
             return float(m["minutes"] if m["probed"] and m["minutes"] is not None else (m["est_min"] or 0.0))
         if m["probed"] and m["support_g"] is not None:
-            return float(m["support_g"])
+            return float(m["support_g"]) + float(m["model_g"] or 0.0)
         return heur(m)
 
     if not best["principal"]:
@@ -729,8 +731,8 @@ def plan_print(
 ) -> dict:
     """items: [{project?: str, name: str, qty: int}] → the arranged plate(s).
 
-    `strategy` picks the orientation objective (see STRATEGIES): least support
-    material, smallest footprints (fewest plates), or shortest parts (fastest).
+    `strategy` picks the orientation objective (see STRATEGIES): least total
+    material (model plus support), smallest footprints (fewest plates), or shortest parts (fastest).
     `supports` toggles support material (auto-placed where overhangs need it) —
     it drops the support time from the estimate and, downstream, from the slice.
     `probe` (needs a slicer): ground-truth the orientation choice — the heuristic
