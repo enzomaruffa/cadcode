@@ -43,7 +43,7 @@ def _require_calls(source: str) -> list[str]:
 
 # GPT-5.6 Terra by default (needs OPENAI_API_KEY at run time).
 # Override with the CAD_AGENT_MODEL env var (any pydantic-ai model id).
-DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "openai:gpt-5.6-terra")
+DEFAULT_MODEL = os.environ.get("CAD_AGENT_MODEL", "openai:gpt-6-sol")
 
 # Reasoning depth for OpenAI models. CAD edits are geometry reasoning under
 # constraints, so this earns its keep — reasoning tokens bill as output, but a
