@@ -65,6 +65,7 @@ class Session:
                     ops=result.ops,
                     specs=result.specs,
                     joints=result.joints,
+                    motion=result.motion,
                     params=extract_params(self.doc.source),
                     stdout=result.stdout,
                 ).model_dump(),

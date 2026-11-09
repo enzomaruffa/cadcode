@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { CadCanvas, type CadCanvasHandle, type PickEvent, type SectionAxis } from "@cadcode/viewer";
+import {
+  CadCanvas,
+  type CadCanvasHandle,
+  type PickEvent,
+  type SectionAxis,
+  type ViewerOptions,
+  type ViewPreset,
+} from "@cadcode/viewer";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
 
@@ -7,6 +14,15 @@ import { useStore } from "../lib/store";
 // unchanged: a pick becomes sendSelect(kind, shapeId, index); in highlight mode
 // a pick reveals the source line instead. A small toolbar drives select/measure
 // and section planes (imperatively, via the canvas handle).
+const VIEWS: [ViewPreset, string, string][] = [
+  ["iso", "iso", "Isometric — click again to orbit to the next corner"],
+  ["front", "front", "Front (looking along +Y)"],
+  ["back", "back", "Back"],
+  ["left", "left", "Left"],
+  ["right", "right", "Right"],
+  ["top", "top", "Top"],
+];
+
 export function Viewport() {
   const viewerRef = useRef<CadCanvasHandle>(null);
   const [mode, setMode] = useState<"select" | "measure">("select");
@@ -15,7 +31,10 @@ export function Viewport() {
 
   const [grid, setGrid] = useState<"off" | "floor" | "walls">("floor");
   const [physics, setPhysics] = useState(false);
+  const [playingJoints, setPlayingJoints] = useState(false); // joint drive sweeping declared ranges
   const [explode, setExplode] = useState(0); // exploded-view spread (0–1)
+  const [xray, setXray] = useState(false);
+  const isoCorner = useRef(-1); // -1 until Iso is clicked; repeated clicks walk the four corners
   const [dims, setDims] = useState<[number, number, number] | null>(null); // model W×D×H chip
 
   const shapes = useStore((s) => s.shapes);
@@ -25,9 +44,35 @@ export function Viewport() {
   const presentation = useStore((s) => s.presentation);
   const physical = useStore((s) => s.physical);
   const joints = useStore((s) => s.joints);
+  const hasDrive = joints.some((j) => j.range && (j.kind === "revolute" || j.kind === "prismatic"));
   const simFrames = useStore((s) => s.simFrames);
   const simFrame = useStore((s) => s.simFrame);
   const simPlaying = useStore((s) => s.simPlaying);
+  const activeDocId = useStore((s) => s.activeDocId);
+
+  const shapesDocId = useStore((s) => s.shapesDocId);
+
+  // Per-document camera memory. Switching documents saves the outgoing view; once
+  // the incoming document's own geometry lands, it gets its saved view back (or a
+  // fresh fit). Re-runs of the same document never touch the camera.
+  const cameras = useRef(new Map<string, ViewerOptions>());
+  const shownDoc = useRef(activeDocId);
+  const pendingDoc = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = shownDoc.current;
+    if (prev === activeDocId) return;
+    shownDoc.current = activeDocId;
+    const v = viewerRef.current;
+    if (prev && pendingDoc.current !== prev && useStore.getState().shapesDocId === prev && v)
+      cameras.current.set(prev, v.getCameraState());
+    pendingDoc.current = activeDocId;
+  }, [activeDocId]);
+  // Runs after CadCanvas has rendered this geometry (child effects fire first).
+  useEffect(() => {
+    if (!pendingDoc.current || shapesDocId !== pendingDoc.current || !shapes?.parts?.length) return;
+    viewerRef.current?.frame(cameras.current.get(shapesDocId));
+    pendingDoc.current = null;
+  }, [rev, shapesDocId, shapes]);
 
   // Apply the exploded-view spread; re-apply on new geometry, skip during physics.
   useEffect(() => {
@@ -102,6 +147,11 @@ export function Viewport() {
     st.sendSelect(p.kind, p.shapeId, p.index);
   };
 
+  const applyView = (v: ViewPreset) => {
+    isoCorner.current = v === "iso" ? (isoCorner.current + 1) % 4 : -1;
+    viewerRef.current?.viewFrom(v, Math.max(isoCorner.current, 0));
+  };
+
   const applyMode = (m: "select" | "measure") => {
     setMode(m);
     viewerRef.current?.setMode(m);
@@ -126,115 +176,152 @@ export function Viewport() {
         joints={joints}
         onPick={onPick}
       />
-      <div className="vp-toolbar">
-        <div className="vp-group">
-          <button
-            className={mode === "select" ? "on" : ""}
-            onClick={() => applyMode("select")}
-            title="Select faces/edges"
-          >
-            select
-          </button>
-          <button
-            className={mode === "measure" ? "on" : ""}
-            onClick={() => applyMode("measure")}
-            title="Click two points to measure"
-          >
-            measure
-          </button>
-        </div>
-        {mode === "measure" && (
-          <button className="vp-btn" onClick={() => viewerRef.current?.clearMeasure()} title="Clear measurements">
-            clear
-          </button>
-        )}
-        <div className="vp-group" title="Section plane — slice the model along an axis">
-          <span className="vp-label">cut</span>
-          {(["x", "y", "z"] as const).map((a) => (
+      <div className="vp-toolbars">
+        <div className="vp-toolbar">
+          <div className="vp-group">
             <button
-              key={a}
-              className={axis === a ? "on" : ""}
-              onClick={() => applySection(axis === a ? null : a, offset)}
-              title={`Cut along ${a.toUpperCase()}`}
+              className={mode === "select" ? "on" : ""}
+              onClick={() => applyMode("select")}
+              title="Select faces/edges"
             >
-              {a.toUpperCase()}
+              select
             </button>
-          ))}
-        </div>
-        {axis && (
-          <input
-            type="range"
-            className="vp-slider"
-            min={0}
-            max={1}
-            step={0.01}
-            value={offset}
-            onChange={(e) => {
-              const o = parseFloat(e.target.value);
-              setOffset(o);
-              applySection(axis, o);
-            }}
-            title="Section offset"
-          />
-        )}
-        <button
-          className={grid !== "off" ? "vp-btn on" : "vp-btn"}
-          onClick={() => {
-            const next = grid === "off" ? "floor" : grid === "floor" ? "walls" : "off";
-            setGrid(next);
-            viewerRef.current?.setGrid(next);
-          }}
-          title="Ruler grid — measured cutting mat with real coordinates. Click to cycle: floor → floor+walls → off"
-        >
-          {grid === "walls" ? "ruler+walls" : "ruler"}
-        </button>
-        {dims && (
-          <span className="vp-dims" title="Model bounding box (W × D × H)">
-            {dims.map((d) => (d >= 100 ? Math.round(d) : Math.round(d * 10) / 10)).join(" × ")} mm
-          </span>
-        )}
-        <button className="vp-btn" onClick={() => viewerRef.current?.fitView()} title="Fit view">
-          fit
-        </button>
-        <div
-          className="vp-group"
-          title="Physics playground — parts fall under gravity; drag them (collisions respected)"
-        >
-          <button
-            className={physics ? "on" : ""}
-            onClick={() => setPhysics((p) => !p)}
-            title="Toggle gravity + drag playground"
-          >
-            {physics ? "◼ physics" : "▶ physics"}
-          </button>
-          {physics && (
-            <button onClick={() => viewerRef.current?.resetPhysics()} title="Drop parts back to their code positions">
-              reset
+            <button
+              className={mode === "measure" ? "on" : ""}
+              onClick={() => applyMode("measure")}
+              title="Click two points to measure"
+            >
+              measure
+            </button>
+          </div>
+          {mode === "measure" && (
+            <button className="vp-btn" onClick={() => viewerRef.current?.clearMeasure()} title="Clear measurements">
+              clear
             </button>
           )}
-          {physics && (
-            <button
-              onClick={bakePhysics}
-              title="Write the current physics poses back into the code as Location(...) transforms"
-            >
-              bake → code
-            </button>
-          )}
-        </div>
-        {!physics && (
-          <div className="vp-group" title="Exploded view — spread parts apart along their assembly axes">
-            <span className="vp-label">explode</span>
+          <div className="vp-group" title="Section plane — slice the model along an axis">
+            <span className="vp-label">cut</span>
+            {(["x", "y", "z"] as const).map((a) => (
+              <button
+                key={a}
+                className={axis === a ? "on" : ""}
+                onClick={() => applySection(axis === a ? null : a, offset)}
+                title={`Cut along ${a.toUpperCase()}`}
+              >
+                {a.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          {axis && (
             <input
-              className="vp-slider"
               type="range"
+              className="vp-slider"
               min={0}
               max={1}
-              step={0.02}
-              value={explode}
-              onChange={(e) => setExplode(parseFloat(e.target.value))}
+              step={0.01}
+              value={offset}
+              onChange={(e) => {
+                const o = parseFloat(e.target.value);
+                setOffset(o);
+                applySection(axis, o);
+              }}
+              title="Section offset"
             />
+          )}
+          <button
+            className={grid !== "off" ? "vp-btn on" : "vp-btn"}
+            onClick={() => {
+              const next = grid === "off" ? "floor" : grid === "floor" ? "walls" : "off";
+              setGrid(next);
+              viewerRef.current?.setGrid(next);
+            }}
+            title="Ruler grid — measured cutting mat with real coordinates. Click to cycle: floor → floor+walls → off"
+          >
+            {grid === "walls" ? "ruler+walls" : "ruler"}
+          </button>
+          {dims && (
+            <span className="vp-dims" title="Model bounding box (W × D × H)">
+              {dims.map((d) => (d >= 100 ? Math.round(d) : Math.round(d * 10) / 10)).join(" × ")} mm
+            </span>
+          )}
+          <button className="vp-btn" onClick={() => viewerRef.current?.fitView()} title="Fit view">
+            fit
+          </button>
+          <div
+            className="vp-group"
+            title="Physics playground — parts fall under gravity; drag them (collisions respected)"
+          >
+            <button
+              className={physics ? "on" : ""}
+              onClick={() => {
+                setPhysics((p) => !p);
+                setPlayingJoints(false);
+              }}
+              title="Toggle gravity + drag playground"
+            >
+              {physics ? "◼ physics" : "▶ physics"}
+            </button>
+            {physics && hasDrive && (
+              <button
+                className={playingJoints ? "on" : ""}
+                onClick={() => {
+                  const next = !playingJoints;
+                  setPlayingJoints(next);
+                  viewerRef.current?.playJoints(next);
+                }}
+                title="Sweep every ranged joint through its declared range — contacts flash red"
+              >
+                {playingJoints ? "◼ play joints" : "▶ play joints"}
+              </button>
+            )}
+            {physics && (
+              <button onClick={() => viewerRef.current?.resetPhysics()} title="Drop parts back to their code positions">
+                reset
+              </button>
+            )}
+            {physics && (
+              <button
+                onClick={bakePhysics}
+                title="Write the current physics poses back into the code as Location(...) transforms"
+              >
+                bake → code
+              </button>
+            )}
           </div>
-        )}
+          {!physics && (
+            <div className="vp-group" title="Exploded view — spread parts apart along their assembly axes">
+              <span className="vp-label">explode</span>
+              <input
+                className="vp-slider"
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={explode}
+                onChange={(e) => setExplode(parseFloat(e.target.value))}
+              />
+            </div>
+          )}
+        </div>
+        <div className="vp-toolbar">
+          <div className="vp-group" title="Standard views — each frames the whole model">
+            {VIEWS.map(([v, label, tip]) => (
+              <button key={v} onClick={() => applyView(v)} title={tip}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className={xray ? "vp-btn on" : "vp-btn"}
+            onClick={() => {
+              setXray(!xray);
+              viewerRef.current?.setXray(!xray);
+            }}
+            title="X-ray — see-through solids so parts inside a shell show"
+          >
+            x-ray
+          </button>
+        </div>
       </div>
     </>
   );

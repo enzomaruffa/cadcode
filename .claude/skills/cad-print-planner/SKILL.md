@@ -50,5 +50,5 @@ Compare orientations at IDENTICAL settings; report grams + minutes. This settles
 ## Gotchas
 
 - `print_hint(flow=...)` must lie IN the layer plane; hints outrank strategy — don't hint axisymmetric parts.
-- Thumbnails: never inline full meshes; `app.thumbnail.decimate()` (grid clustering) then `iso_svg_mesh`.
+- Thumbnails: `iso_svg_mesh` rasterizes the full mesh into a PNG inside the SVG, so payload size no longer grows with triangle count.
 - Reality check for users: tiny bores clog solids regardless of planning; heavy-overhang parts get an honest `suggest_split` with a build123d `split()` recipe.

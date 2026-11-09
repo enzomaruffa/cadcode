@@ -21,6 +21,23 @@ import { PhysicsClient } from "../physics/PhysicsClient";
 import type { RawJoint } from "../physics/protocol";
 
 export type InteractionMode = "select" | "measure";
+export type ViewPreset = "iso" | "front" | "back" | "left" | "right" | "top";
+
+// Z-up camera offsets. Front looks along +Y (build123d's front is the -Y side).
+const VIEW_DIRS: Record<Exclude<ViewPreset, "iso">, [number, number, number]> = {
+  front: [0, -1, 0],
+  back: [0, 1, 0],
+  left: [-1, 0, 0],
+  right: [1, 0, 0],
+  top: [0, 0, 1],
+};
+const ISO_CORNERS: [number, number, number][] = [
+  [1, -1, 1],
+  [1, 1, 1],
+  [-1, 1, 1],
+  [-1, -1, 1],
+];
+const XRAY_OPACITY = 0.3;
 
 const DPR_CAP = 2;
 
@@ -53,8 +70,10 @@ export class CadViewer {
   private joints: RawJoint[] = []; // assembly joint graph for the articulated sim
   private explodeOrig: Map<object, THREE.Vector3> | null = null; // per-leaf home positions
   private mode: InteractionMode = "select";
+  private xray = false;
 
   private framedOnce = false;
+  private gizmoOn = true;
   private rafId: number | null = null;
   private disposed = false;
   // Motion sim: leaves currently flashed for collision → their original color.
@@ -82,6 +101,9 @@ export class CadViewer {
 
     this.rig = new CameraRig(options);
     this.controls = new Controls(this.rig.camera, this.renderer.domElement, this.rig.target, () => {
+      // OrbitControls pans its own copy of the target; keep the rig's in step so
+      // getCameraState() round-trips a panned view.
+      if (this.controls) this.rig.target.copy(this.controls.target);
       this.emitCameraChange();
       this.requestRender();
     });
@@ -133,10 +155,11 @@ export class CadViewer {
     this.applyClipping();
     this.grid.fitTo(sg.bbox);
     this.controller.setTargets(sg.leaves);
+    if (this.xray) this.applyXray(true);
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
     // free. Only fit on the very first render, or restore when the host hands us
-    // an explicit camera (e.g. switching documents).
+    // an explicit camera; hosts switching documents call frame().
     if (!this.framedOnce) {
       this.rig.fitTo(sg.bbox);
       this.controls.syncTarget(this.rig.target);
@@ -145,6 +168,57 @@ export class CadViewer {
       this.rig.restore(viewerOptions);
       this.controls.syncTarget(this.rig.target);
     }
+    this.requestRender();
+  }
+
+  /** Render `shapes` at width×height CSS px, fit to the iso view and return the
+   *  frame as a PNG data URL. Draws and reads back in the same task, so it works
+   *  without `preserveDrawingBuffer`. No gizmo or overlays. */
+  snapshot(shapes: TessShapes, preset: RenderPreset, width: number, height: number): string {
+    if (this.disposed) return "";
+    this.resize(width, height);
+    this.render(shapes, preset);
+    this.frameTight();
+    if (this.rafId != null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.lights.updateHeadlight(this.rig.camera);
+    if (this.preset.aoEnabled) this.post.render();
+    else this.renderer.render(this.scene, this.rig.camera);
+    const url = this.renderer.domElement.toDataURL("image/png");
+    this.clearGraph();
+    return url;
+  }
+
+  /** Iso fit, then zoom until the model's projected bbox fills `fill` of the
+   *  smaller half-extent of the view (fit() frames the bounding sphere, which
+   *  leaves flat or slender parts tiny in a small card). */
+  frameTight(fill = 0.85): void {
+    const sg = this.sceneGraph;
+    if (!sg) return;
+    this.rig.fitTo(sg.bbox);
+    this.controls.syncTarget(this.rig.target);
+    const cam = this.rig.camera;
+    cam.updateMatrixWorld();
+    const b = sg.bbox;
+    const v = new THREE.Vector3();
+    let ext = 0;
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).project(cam);
+      ext = Math.max(ext, Math.abs(v.x), Math.abs(v.y));
+    }
+    if (ext > 0) {
+      cam.zoom *= fill / ext;
+      cam.updateProjectionMatrix();
+    }
+    this.emitCameraChange();
+    this.requestRender();
+  }
+
+  /** Show or hide the corner axis gizmo. */
+  setGizmo(on: boolean): void {
+    this.gizmoOn = on;
     this.requestRender();
   }
 
@@ -209,7 +283,7 @@ export class CadViewer {
     else this.renderer.render(this.scene, this.rig.camera);
     this.measure.render(this.scene, this.rig.camera);
     this.physical.render(this.scene, this.rig.camera);
-    this.gizmo.render(this.renderer, this.rig.camera);
+    if (this.gizmoOn) this.gizmo.render(this.renderer, this.rig.camera);
   }
 
   // --- camera ---------------------------------------------------------------
@@ -221,6 +295,62 @@ export class CadViewer {
       this.emitCameraChange();
       this.requestRender();
     }
+  }
+
+  /** Frame the whole model from a named view; `isoCorner` picks one of the four iso corners. */
+  viewFrom(view: ViewPreset, isoCorner = 0): void {
+    if (!this.sceneGraph) return;
+    const d = view === "iso" ? ISO_CORNERS[((isoCorner % 4) + 4) % 4] : VIEW_DIRS[view];
+    this.rig.fitTo(this.sceneGraph.bbox, new THREE.Vector3(...d));
+    this.controls.syncTarget(this.rig.target);
+    this.emitCameraChange();
+    this.requestRender();
+  }
+
+  /** X-ray: every solid see-through so inner parts show; edges stay opaque. */
+  setXray(on: boolean): void {
+    if (on === this.xray) return;
+    this.xray = on;
+    this.applyXray(on);
+    this.requestRender();
+  }
+
+  // Each material remembers its own look in userData so turning x-ray off restores
+  // exactly what the preset / view mode built, including already-transparent ghosts.
+  private applyXray(on: boolean): void {
+    if (!this.sceneGraph) return;
+    for (const leaf of this.sceneGraph.leaves) {
+      for (const mesh of [leaf.front, leaf.back]) {
+        if (!mesh) continue;
+        const mat = mesh.material as THREE.Material;
+        const saved = mat.userData.xray as { transparent: boolean; opacity: number; depthWrite: boolean } | undefined;
+        if (on && !saved) {
+          mat.userData.xray = { transparent: mat.transparent, opacity: mat.opacity, depthWrite: mat.depthWrite };
+          mat.transparent = true;
+          mat.opacity = Math.min(mat.opacity, mesh === leaf.back ? XRAY_OPACITY / 2 : XRAY_OPACITY);
+          mat.depthWrite = false;
+        } else if (!on && saved) {
+          mat.transparent = saved.transparent;
+          mat.opacity = saved.opacity;
+          mat.depthWrite = saved.depthWrite;
+          delete mat.userData.xray;
+        } else continue;
+        mat.needsUpdate = true;
+      }
+      if (leaf.front) leaf.front.castShadow = !on;
+    }
+  }
+
+  /** Frame the current geometry: restore `camera` if given, else fit. */
+  frame(camera?: ViewerOptions): void {
+    if (!this.sceneGraph) return;
+    // fitTo also sizes the ortho frustum and near/far planes to this bbox, which a
+    // saved camera state doesn't carry.
+    this.rig.fitTo(this.sceneGraph.bbox);
+    if (camera?.position) this.rig.restore(camera);
+    this.controls.syncTarget(this.rig.target);
+    this.emitCameraChange();
+    this.requestRender();
   }
 
   setOrtho(ortho: boolean): void {
@@ -382,6 +512,8 @@ export class CadViewer {
     this.setPicking(false); // the physics grab owns the pointer while playing
     // The solver runs in a Web Worker and streams transforms back; it drives the
     // render itself (via the requestRender callback) — no main-thread step loop.
+    // Contact events flash the touching parts — honest animation, no ghosting.
+    this.physics.onContacts = (ids) => this.flashLeaves(ids, "#f85149");
     this.physics.start(this.sceneGraph, this.joints);
   }
 
@@ -389,6 +521,17 @@ export class CadViewer {
    *  articulated constraints). Set from the geometry payload before play. */
   setJoints(joints: RawJoint[]): void {
     this.joints = joints;
+  }
+
+  /** Whether any declared joint has a motion range the drive can sweep. */
+  get hasDrivableJoints(): boolean {
+    return this.joints.some((j) => j.range && (j.kind === "revolute" || j.kind === "prismatic"));
+  }
+
+  /** Sweep every ranged joint through its declared range (physics must be on). */
+  playJoints(on: boolean, periodS = 4): void {
+    if (!this.physics.active) return;
+    this.physics.drive(on ? "range-pingpong" : "off", periodS);
   }
 
   /** Exploded view: slide each part radially out from the assembly center by
@@ -412,6 +555,7 @@ export class CadViewer {
 
   stopPhysics(): void {
     if (this.physics.active) this.physics.stop();
+    this.flashLeaves([], "#f85149"); // clear any lingering contact flash
     if (!this.disposed) this.setPicking(true);
     this.requestRender();
   }

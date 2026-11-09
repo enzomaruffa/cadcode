@@ -109,9 +109,23 @@ export interface GeometryPayload {
   print_stats?: Record<string, number | string> | null;
   physical?: PhysicalPayload | null;
   joints?: unknown[]; // assembly joint graph (typed as RawJoint[] where consumed)
+  motion?: unknown[]; // require_motion sweep records (typed as MotionSweep[] where consumed)
 }
 
 export type ViewMode = "technical" | "printability" | "highlight" | "physical" | "motion";
+
+// One require_motion sweep, serialized by the kernel: per-pose transforms of the
+// moving leaf + boolean contact volume. Scrubbable without a kernel round-trip.
+export interface MotionSweep {
+  label: string;
+  moving: string | null; // leaf id of the swept part (null if it wasn't shown)
+  max_contact: number;
+  poses: { t: number; contact_mm3: number; pose: Pose }[];
+  worst_contact: number;
+  worst_t: number;
+  truncated: boolean;
+  passed: boolean;
+}
 
 // Motion-sim (backend app/kernel/simulate.py). A pose is [position, quatXYZW].
 export type Pose = [[number, number, number], [number, number, number, number]];

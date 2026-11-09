@@ -18,7 +18,7 @@ from __future__ import annotations
 import ast
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -110,7 +110,7 @@ def _model_settings(model_id: Any) -> Any | None:
         return None
     from pydantic_ai.models.openai import OpenAIChatModelSettings
 
-    return OpenAIChatModelSettings(openai_reasoning_effort=CAD_REASONING_EFFORT)
+    return OpenAIChatModelSettings(openai_reasoning_effort=cast(Any, CAD_REASONING_EFFORT))
 
 
 def build_agent(model: Any | None = None) -> Agent[CadDeps, Patch]:

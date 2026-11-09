@@ -41,6 +41,7 @@ interface PlaneSpec {
   uAxis: "X" | "Y" | "Z";
   vAxis: "X" | "Y" | "Z";
   axisLines: boolean; // tint the u=0 / v=0 lines (floor only)
+  labelMm: number; // label height in world mm
 }
 
 /** Draw a ruler plane onto a canvas: minor/major grid + coordinate labels. */
@@ -85,32 +86,38 @@ function drawRuler(spec: PlaneSpec): HTMLCanvasElement {
   }
 
   // labels on ALL FOUR edges (like a real cutting mat — some edge is always
-  // visible whatever the orbit), true world coordinates.
-  const fontPx = Math.max(Math.min(step * sx * 0.32, 64), 22);
+  // visible whatever the orbit), true world coordinates. Sized as a quiet ruler,
+  // and any label that would cross the texture edge is dropped, not clipped.
+  const fontPx = Math.max(Math.min(spec.labelMm * sx, step * sx * 0.3), 14);
   ctx.font = `500 ${fontPx}px ui-monospace, Menlo, monospace`;
   ctx.fillStyle = LABEL;
-  const inset = fontPx + 10;
+  const pad = Math.round(fontPx * 0.6);
+  const inset = fontPx + pad * 2;
+  ctx.textAlign = "center";
   for (let u = Math.ceil(u0 / step) * step; u <= u1 + 1e-9; u += step) {
-    ctx.textAlign = "center";
+    const x = px(u);
+    const half = ctx.measureText(fmt(u)).width / 2;
+    if (x - half < pad || x + half > TEX - pad) continue;
     ctx.textBaseline = "bottom";
-    ctx.fillText(fmt(u), px(u), TEX - 6);
+    ctx.fillText(fmt(u), x, TEX - pad);
     ctx.textBaseline = "top";
-    ctx.fillText(fmt(u), px(u), 6);
+    ctx.fillText(fmt(u), x, pad);
   }
   ctx.textBaseline = "middle";
   for (let v = Math.ceil(v0 / step) * step; v <= v1 + 1e-9; v += step) {
     const y = py(v);
     if (y < inset || y > TEX - inset) continue; // corners belong to the u rows
     ctx.textAlign = "left";
-    ctx.fillText(fmt(v), 8, y);
+    ctx.fillText(fmt(v), pad, y);
+    if (y < inset + fontPx * 1.5) continue; // the unit tag owns this corner
     ctx.textAlign = "right";
-    ctx.fillText(fmt(v), TEX - 8, y);
+    ctx.fillText(fmt(v), TEX - pad, y);
   }
   // unit + axis tag just inside the corner (below the top label row)
   ctx.fillStyle = LABEL_UNIT;
   ctx.textAlign = "right";
   ctx.textBaseline = "top";
-  ctx.fillText(`${spec.uAxis}/${spec.vAxis} mm`, TEX - 10, inset + 6);
+  ctx.fillText(`${spec.uAxis}/${spec.vAxis} mm`, TEX - pad, inset);
   return canvas;
 }
 
@@ -158,6 +165,9 @@ export class Grid {
     const step = niceStep(span * 1.6);
     // world-aligned extents: snap to step multiples so lines sit on real coords
     const half = Math.max(span * 1.1, step * 4);
+    // A fit frames the model at roughly the same screen size whatever its scale, so
+    // tying the label to the model's largest dimension keeps it a steady ~12 px on screen.
+    const labelMm = 0.032 * Math.max(size.x, size.y, size.z, 10);
     const u0 = Math.floor((c.x - half) / step) * step;
     const u1 = Math.ceil((c.x + half) / step) * step;
     const v0 = Math.floor((c.y - half) / step) * step;
@@ -166,7 +176,7 @@ export class Grid {
     // floor (XY plane at the model's base)
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(u1 - u0, v1 - v0),
-      matFor(drawRuler({ u0, u1, v0, v1, step, uAxis: "X", vAxis: "Y", axisLines: true })),
+      matFor(drawRuler({ u0, u1, v0, v1, step, uAxis: "X", vAxis: "Y", axisLines: true, labelMm })),
     );
     floor.position.set((u0 + u1) / 2, (v0 + v1) / 2, bbox.min.z - 0.05);
     floor.renderOrder = -1;
@@ -178,14 +188,14 @@ export class Grid {
       // back wall (XZ plane at the far +Y edge) — read X/Z
       const back = new THREE.Mesh(
         new THREE.PlaneGeometry(u1 - u0, h1 - h0),
-        matFor(drawRuler({ u0, u1, v0: h0, v1: h1, step, uAxis: "X", vAxis: "Z", axisLines: false })),
+        matFor(drawRuler({ u0, u1, v0: h0, v1: h1, step, uAxis: "X", vAxis: "Z", axisLines: false, labelMm })),
       );
       back.rotation.x = Math.PI / 2;
       back.position.set((u0 + u1) / 2, v1, (h0 + h1) / 2);
       // left wall (YZ plane at the far -X edge) — read Y/Z
       const left = new THREE.Mesh(
         new THREE.PlaneGeometry(v1 - v0, h1 - h0),
-        matFor(drawRuler({ u0: v0, u1: v1, v0: h0, v1: h1, step, uAxis: "Y", vAxis: "Z", axisLines: false })),
+        matFor(drawRuler({ u0: v0, u1: v1, v0: h0, v1: h1, step, uAxis: "Y", vAxis: "Z", axisLines: false, labelMm })),
       );
       left.rotation.y = Math.PI / 2;
       left.rotation.z = Math.PI / 2;

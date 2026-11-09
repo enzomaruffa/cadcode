@@ -16,6 +16,18 @@ let cursor: RAPIER.RigidBody | null = null;
 let dragJoint: RAPIER.ImpulseJoint | null = null;
 let init: InitMsg | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
+// Contact events: collider handle → body index (ground and cursor excluded), the
+// currently-touching pair set, and whether it changed since the last frame.
+let eventQueue: RAPIER.EventQueue | null = null;
+let handleToBody = new Map<number, number>();
+let contacts = new Set<number>(); // packed pair key: min * 65536 + max
+let contactsDirty = false;
+// Ranged joints that "play joints" can drive, with the drive state.
+let drivable: { joint: RAPIER.RevoluteImpulseJoint | RAPIER.PrismaticImpulseJoint; range: [number, number] }[] = [];
+let driveMode: "range-pingpong" | "off" = "off";
+let drivePeriodMs = 4000;
+let driveT0 = 0;
+let savedGravity: { x: number; y: number; z: number } | null = null;
 
 const post = (m: OutMsg) => (self as unknown as Worker).postMessage(m);
 
@@ -34,6 +46,7 @@ self.onmessage = async (e: MessageEvent<InMsg>) => {
   else if (m.type === "move") onMove(m.point);
   else if (m.type === "release") onRelease();
   else if (m.type === "reset") onReset();
+  else if (m.type === "drive") onDrive(m.mode, m.period_s);
   else if (m.type === "stop") teardown();
 };
 
@@ -52,6 +65,9 @@ async function onInit(m: InitMsg): Promise<void> {
   world.createCollider(RAPIER.ColliderDesc.cuboid(m.extent, m.extent, 0.5).setFriction(0.7).setRestitution(0.04), gb);
 
   bodies = [];
+  handleToBody = new Map();
+  contacts = new Set();
+  contactsDirty = false;
   for (const b of m.bodies) {
     const rb = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -64,11 +80,14 @@ async function onInit(m: InitMsg): Promise<void> {
     const col = colliderFor(b);
     if (col) {
       col.setFriction(0.7).setRestitution(0.04).setDensity(m.density);
-      world.createCollider(col, rb);
+      col.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      const collider = world.createCollider(col, rb);
+      handleToBody.set(collider.handle, bodies.length);
     }
     bodies.push(rb);
   }
   transforms = new Float32Array(bodies.length * FLOATS_PER_BODY);
+  eventQueue = new RAPIER.EventQueue(true);
 
   // Articulation: the build123d joint graph → Rapier constraints. A revolute
   // joint becomes a hinge (grab a linked part, it swings on its real axis);
@@ -86,10 +105,14 @@ async function onInit(m: InitMsg): Promise<void> {
     else if (j.kind === "spherical") params = RAPIER.JointData.spherical(anchorA, anchorB);
     else params = RAPIER.JointData.fixed(anchorA, { w: 1, x: 0, y: 0, z: 0 }, anchorB, { w: 1, x: 0, y: 0, z: 0 });
     const joint = world.createImpulseJoint(params, a, b, true);
+    // Jointed pairs always touch at their axis — without this, contact events
+    // paint every hinge permanently red.
+    joint.setContactsEnabled(false);
     if (j.range && (j.kind === "revolute" || j.kind === "prismatic")) {
       const rad = j.kind === "revolute" ? Math.PI / 180 : 1;
       const jj = joint as RAPIER.RevoluteImpulseJoint | RAPIER.PrismaticImpulseJoint;
       if (typeof jj.setLimits === "function") jj.setLimits(j.range[0] * rad, j.range[1] * rad);
+      drivable.push({ joint: jj, range: [j.range[0] * rad, j.range[1] * rad] });
     }
   }
 
@@ -144,7 +167,9 @@ function tick(): void {
   last = now;
   let stepped = false;
   while (acc >= FIXED_MS) {
-    world.step();
+    if (driveMode === "range-pingpong") driveJoints(now);
+    world.step(eventQueue ?? undefined);
+    drainContacts();
     acc -= FIXED_MS;
     stepped = true;
   }
@@ -161,7 +186,70 @@ function tick(): void {
     transforms[o + 5] = r.z;
     transforms[o + 6] = r.w;
   }
-  post({ type: "frame", transforms: transforms.slice(0) });
+  const frame: { type: "frame"; transforms: Float32Array; contacts?: Int32Array } = {
+    type: "frame",
+    transforms: transforms.slice(0),
+  };
+  if (contactsDirty) {
+    const flat = new Int32Array(contacts.size * 2);
+    let k = 0;
+    for (const key of contacts) {
+      flat[k++] = Math.floor(key / 65536);
+      flat[k++] = key % 65536;
+    }
+    frame.contacts = flat;
+    contactsDirty = false;
+  }
+  post(frame);
+}
+
+function drainContacts(): void {
+  eventQueue?.drainCollisionEvents((h1, h2, started) => {
+    const a = handleToBody.get(h1);
+    const b = handleToBody.get(h2);
+    if (a === undefined || b === undefined) return; // ground / cursor involved
+    const key = Math.min(a, b) * 65536 + Math.max(a, b);
+    const had = contacts.has(key);
+    if (started && !had) {
+      contacts.add(key);
+      contactsDirty = true;
+    } else if (!started && had) {
+      contacts.delete(key);
+      contactsDirty = true;
+    }
+  });
+}
+
+// Time-based triangle wave through each ranged joint's limits (Rapier 0.19 has
+// no joint-angle getter to close the loop on). Stiff position motor, soft
+// damping — the joint chases the target but still yields to real collisions,
+// which is exactly what makes the contact flash honest.
+function driveJoints(now: number): void {
+  const phase = ((now - driveT0) % drivePeriodMs) / drivePeriodMs; // 0..1
+  const tri = phase < 0.5 ? phase * 2 : 2 - phase * 2; // 0→1→0
+  for (const d of drivable) {
+    const target = d.range[0] + (d.range[1] - d.range[0]) * tri;
+    d.joint.configureMotorPosition(target, 1e6, 1e4);
+  }
+  for (const b of bodies) b.wakeUp();
+}
+
+function onDrive(mode: "range-pingpong" | "off", period_s?: number): void {
+  driveMode = mode;
+  drivePeriodMs = Math.max(0.5, period_s ?? 4) * 1000;
+  driveT0 = performance.now();
+  if (!world) return;
+  if (mode === "range-pingpong") {
+    // Park gravity while driving so the mechanism sweeps instead of sagging.
+    if (!savedGravity) savedGravity = { x: world.gravity.x, y: world.gravity.y, z: world.gravity.z };
+    world.gravity = { x: 0, y: 0, z: 0 };
+  } else {
+    for (const d of drivable) d.joint.configureMotorVelocity(0, 0);
+    if (savedGravity) {
+      world.gravity = savedGravity;
+      savedGravity = null;
+    }
+  }
 }
 
 function onGrab(index: number, pivot: [number, number, number]): void {
@@ -203,10 +291,18 @@ function onReset(): void {
 function teardown(): void {
   stop();
   onRelease();
+  eventQueue?.free();
+  eventQueue = null;
   world?.free();
   world = null;
   bodies = [];
   cursor = null;
+  drivable = [];
+  driveMode = "off";
+  savedGravity = null;
+  handleToBody = new Map();
+  contacts = new Set();
+  contactsDirty = false;
 }
 
 /** Rotate a local vector by a quaternion (q · v · q⁻¹), no THREE in the worker. */

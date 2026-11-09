@@ -38,7 +38,7 @@ cairosvg.svg2png(bytestring=svg.encode(), write_to=path, output_width=680,
 
 - **Half-section** (show internals): subtract a big aligned `Box` from the part in the preview script, e.g. `funnel() - Pos(0,0,z)*Box(400,400,400, align=(Align.MIN, Align.CENTER, Align.CENTER))`. Rotate the cut part so the opening faces the fixed ISO camera (there is no camera control — rotate the MODEL, e.g. `Rot(Z=180) * cut`).
 - **Thin slice** (wall profile): `part & Box(400, 2, 400)` then `Rot(X=90)`.
-- For raw meshes there's `iso_svg_mesh(verts, tris, size, cells=24)` with grid-decimation (~9k tris → hundreds; low-poly reads fine at thumbnail size).
+- For raw meshes there's `iso_svg_mesh(verts, tris, size)` (full mesh, z-buffered; `cells` is ignored).
 - Send PNGs with SendUserFile; render at ≥560px on a dark bg.
 
 ## Checks

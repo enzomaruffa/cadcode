@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { CadViewer, type InteractionMode } from "../core/CadViewer";
+import { CadViewer, type InteractionMode, type ViewPreset } from "../core/CadViewer";
 import { TECHNICAL, PRESENTATION } from "../materials/materials";
 import type { SectionAxis } from "../interaction/Section";
 import type { PhysicalData } from "../interaction/PhysicalOverlay";
@@ -34,8 +34,13 @@ export interface CadCanvasProps {
 
 export interface CadCanvasHandle {
   fitView: () => void;
+  frameTight: (fill?: number) => void;
+  setGizmo: (on: boolean) => void;
   getCameraState: () => ViewerOptions;
   setCameraState: (c: ViewerOptions) => void;
+  frame: (camera?: ViewerOptions) => void;
+  viewFrom: (view: ViewPreset, isoCorner?: number) => void;
+  setXray: (on: boolean) => void;
   setSection: (axis: SectionAxis | null, offset?: number) => void;
   setMode: (mode: InteractionMode) => void;
   clearMeasure: () => void;
@@ -44,6 +49,8 @@ export interface CadCanvasHandle {
   setPose: (poses: Record<string, [[number, number, number], [number, number, number, number]]>) => void;
   flashLeaves: (ids: string[], hex: string) => void;
   resetPhysics: () => void;
+  playJoints: (on: boolean, periodS?: number) => void;
+  hasDrivableJoints: () => boolean;
   setExplode: (factor: number) => void;
   bakePhysics: () => Record<string, { pos: [number, number, number]; axis: [number, number, number]; angle: number }>;
 }
@@ -68,8 +75,13 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
 
   useImperativeHandle(ref, () => ({
     fitView: () => viewerRef.current?.fit(),
+    frameTight: (fill) => viewerRef.current?.frameTight(fill),
+    setGizmo: (on) => viewerRef.current?.setGizmo(on),
     getCameraState: () => viewerRef.current?.getCameraState() ?? {},
     setCameraState: (c) => viewerRef.current?.setCameraState(c),
+    frame: (camera) => viewerRef.current?.frame(camera),
+    viewFrom: (view, isoCorner) => viewerRef.current?.viewFrom(view, isoCorner),
+    setXray: (on) => viewerRef.current?.setXray(on),
     setSection: (axis, offset) => viewerRef.current?.setSection(axis, offset),
     setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
     clearMeasure: () => viewerRef.current?.clearMeasure(),
@@ -78,6 +90,8 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     setPose: (poses) => viewerRef.current?.setPose(poses),
     flashLeaves: (ids, hex) => viewerRef.current?.flashLeaves(ids, hex),
     resetPhysics: () => viewerRef.current?.resetPhysics(),
+    playJoints: (on, periodS) => viewerRef.current?.playJoints(on, periodS),
+    hasDrivableJoints: () => viewerRef.current?.hasDrivableJoints ?? false,
     setExplode: (factor) => viewerRef.current?.setExplode(factor),
     bakePhysics: () => viewerRef.current?.bakePhysics() ?? {},
   }));
