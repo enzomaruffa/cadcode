@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { CadViewer, type InteractionMode } from "../core/CadViewer";
+import { CadViewer, type InteractionMode, type ViewPreset } from "../core/CadViewer";
 import { TECHNICAL, PRESENTATION } from "../materials/materials";
 import type { SectionAxis } from "../interaction/Section";
 import type { PhysicalData } from "../interaction/PhysicalOverlay";
@@ -36,6 +36,9 @@ export interface CadCanvasHandle {
   fitView: () => void;
   getCameraState: () => ViewerOptions;
   setCameraState: (c: ViewerOptions) => void;
+  frame: (camera?: ViewerOptions) => void;
+  viewFrom: (view: ViewPreset, isoCorner?: number) => void;
+  setXray: (on: boolean) => void;
   setSection: (axis: SectionAxis | null, offset?: number) => void;
   setMode: (mode: InteractionMode) => void;
   clearMeasure: () => void;
@@ -72,6 +75,9 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     fitView: () => viewerRef.current?.fit(),
     getCameraState: () => viewerRef.current?.getCameraState() ?? {},
     setCameraState: (c) => viewerRef.current?.setCameraState(c),
+    frame: (camera) => viewerRef.current?.frame(camera),
+    viewFrom: (view, isoCorner) => viewerRef.current?.viewFrom(view, isoCorner),
+    setXray: (on) => viewerRef.current?.setXray(on),
     setSection: (axis, offset) => viewerRef.current?.setSection(axis, offset),
     setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
     clearMeasure: () => viewerRef.current?.clearMeasure(),

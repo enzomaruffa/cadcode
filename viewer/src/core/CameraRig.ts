@@ -2,7 +2,10 @@ import * as THREE from "three";
 import type { ViewerOptions } from "./types";
 
 const MARGIN = 1.35;
+const FIT_PAD = 1.4; // breathing room around the projected bbox on fit
 const FOV = 22;
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
 
 // Combined orthographic + perspective camera with a Z-up, iso default framing
 // (FreeCAD/OnShape convention) and absolute camera-state save/restore so
@@ -48,27 +51,62 @@ export class CameraRig {
     this.persp.updateProjectionMatrix();
   }
 
-  /** Frame the camera isometrically to a bbox (used on first render and `fit`). */
-  fitTo(bbox: THREE.Box3): void {
+  /** Frame a bbox looking along `-dir` (camera sits at center + dir); iso when omitted. */
+  fitTo(bbox: THREE.Box3, dir?: THREE.Vector3): void {
     const center = bbox.getCenter(new THREE.Vector3());
     const size = bbox.getSize(new THREE.Vector3());
     this.radius = Math.max(0.5 * size.length(), 0.001);
     this.target.copy(center);
 
-    // Iso direction for the configured up axis.
-    const dir = this.up.z === 1 ? new THREE.Vector3(1, -1, 1).normalize() : new THREE.Vector3(1, 1, 1).normalize();
+    const view = (
+      dir?.clone() ?? (this.up.z === 1 ? new THREE.Vector3(1, -1, 1) : new THREE.Vector3(1, 1, 1))
+    ).normalize();
+    // Straight down/up the up axis makes lookAt degenerate; nudge so screen-up stays +Y.
+    if (Math.abs(view.dot(this.up)) > 0.9999)
+      view.addScaledVector(this.up.z === 1 ? AXIS_Y : AXIS_Z, -1e-3).normalize();
     const dist = this.radius * 4;
 
     for (const cam of [this.ortho, this.persp]) {
-      cam.position.copy(center).addScaledVector(dir, dist);
+      cam.position.copy(center).addScaledVector(view, dist);
       cam.near = Math.max(this.radius * 0.01, 0.01);
       cam.far = dist + this.radius * 8;
       cam.up.copy(this.up);
       cam.lookAt(center);
+      cam.updateMatrixWorld();
     }
     this.ortho.zoom = 1;
     this.persp.zoom = 1;
     this.updateProjection();
+    this.tighten(bbox);
+  }
+
+  // The bounding sphere wastes a lot of screen on boxy models seen along an axis,
+  // so frame the bbox corners as actually projected for this view.
+  private tighten(bbox: THREE.Box3): void {
+    const inv = this.ortho.matrixWorldInverse;
+    let hx = 0;
+    let hy = 0;
+    let hz = 0;
+    const p = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      p.set(i & 1 ? bbox.max.x : bbox.min.x, i & 2 ? bbox.max.y : bbox.min.y, i & 4 ? bbox.max.z : bbox.min.z);
+      p.applyMatrix4(inv);
+      hx = Math.max(hx, Math.abs(p.x));
+      hy = Math.max(hy, Math.abs(p.y));
+      hz = Math.max(hz, Math.abs(p.z + this.radius * 4));
+    }
+    hx = Math.max(hx * FIT_PAD, 1e-3);
+    hy = Math.max(hy * FIT_PAD, 1e-3);
+    this.ortho.zoom = Math.min(this.ortho.top / hy, this.ortho.right / hx);
+    this.ortho.updateProjectionMatrix();
+
+    const tanV = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
+    const tanH = tanV * this.aspect;
+    const dist = Math.max(hy / tanV, hx / tanH) + hz;
+    const dir = this.persp.position.clone().sub(this.target).normalize();
+    this.persp.position.copy(this.target).addScaledVector(dir, dist);
+    this.persp.far = Math.max(this.persp.far, dist + this.radius * 4);
+    this.persp.updateProjectionMatrix();
   }
 
   restore(opts: ViewerOptions): void {
