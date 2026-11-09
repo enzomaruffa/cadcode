@@ -82,6 +82,9 @@ export class CadViewer {
 
     this.rig = new CameraRig(options);
     this.controls = new Controls(this.rig.camera, this.renderer.domElement, this.rig.target, () => {
+      // OrbitControls pans its own copy of the target; keep the rig's in step so
+      // getCameraState() round-trips a panned view.
+      if (this.controls) this.rig.target.copy(this.controls.target);
       this.emitCameraChange();
       this.requestRender();
     });
@@ -136,7 +139,7 @@ export class CadViewer {
 
     // The camera rig is long-lived, so it persists across geometry rebuilds for
     // free. Only fit on the very first render, or restore when the host hands us
-    // an explicit camera (e.g. switching documents).
+    // an explicit camera; hosts switching documents call frame().
     if (!this.framedOnce) {
       this.rig.fitTo(sg.bbox);
       this.controls.syncTarget(this.rig.target);
@@ -221,6 +224,18 @@ export class CadViewer {
       this.emitCameraChange();
       this.requestRender();
     }
+  }
+
+  /** Frame the current geometry: restore `camera` if given, else fit. */
+  frame(camera?: ViewerOptions): void {
+    if (!this.sceneGraph) return;
+    // fitTo also sizes the ortho frustum and near/far planes to this bbox, which a
+    // saved camera state doesn't carry.
+    this.rig.fitTo(this.sceneGraph.bbox);
+    if (camera?.position) this.rig.restore(camera);
+    this.controls.syncTarget(this.rig.target);
+    this.emitCameraChange();
+    this.requestRender();
   }
 
   setOrtho(ortho: boolean): void {

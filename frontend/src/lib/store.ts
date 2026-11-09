@@ -89,6 +89,7 @@ interface StoreState {
   activeDocId: string;
   // monotonically bumped whenever new geometry arrives, so the viewport re-renders
   shapes: TessShapes | null;
+  shapesDocId: string; // the doc whose run produced `shapes`
   geometryRev: number;
   stale: boolean;
   runState: RunState;
@@ -171,7 +172,13 @@ interface StoreState {
   setActiveProject: (project: string | null) => void;
   syncProjectDoc: (project: string, kind: string, name: string, source: string) => void;
   renameProjectDoc: (project: string, kind: string, oldName: string, newName: string, source: string) => void;
-  renderShapes: (shapes: TessShapes | null, specs: Spec[], joints?: RawJoint[], motion?: MotionSweep[]) => void;
+  renderShapes: (
+    shapes: TessShapes | null,
+    specs: Spec[],
+    joints?: RawJoint[],
+    motion?: MotionSweep[],
+    docId?: string,
+  ) => void;
   setProjectPatch: (patch: {
     project: string;
     rationale: string;
@@ -246,6 +253,7 @@ async function renderRunTarget(project: string, kind: string, name: string): Pro
 // can't do that. A part has no show() of its own, so preview it by wrapping;
 // project.py is constants only, so just confirm it imports.
 async function runProjectDoc(origin: Origin, source: string) {
+  const docId = useStore.getState().activeDocId;
   const rel = originRelPath(origin);
   const body: Record<string, unknown> = { kind: origin.kind, name: origin.name, overrides: { [rel]: source } };
   if (origin.kind === "part") {
@@ -275,7 +283,7 @@ async function runProjectDoc(origin: Origin, source: string) {
       error_line?: number | null;
     } = await r.json();
     if (d.ok && d.shapes) {
-      useStore.getState().renderShapes(d.shapes, d.specs ?? [], d.joints ?? [], d.motion ?? []);
+      useStore.getState().renderShapes(d.shapes, d.specs ?? [], d.joints ?? [], d.motion ?? [], docId);
       useStore.setState({ params: d.params ?? [] }); // sliders for the edited project file
     } else if (d.ok) {
       useStore.setState({ error: null, runState: "ok", params: d.params ?? [] }); // ran, no geometry (project.py)
@@ -325,6 +333,7 @@ export const useStore = create<StoreState>()(
       docs: [],
       activeDocId: "",
       shapes: null,
+      shapesDocId: "",
       geometryRev: 0,
       stale: false,
       runState: "idle",
@@ -415,6 +424,7 @@ export const useStore = create<StoreState>()(
               }
               set((s) => ({
                 shapes: p.shapes,
+                shapesDocId: s.activeDocId,
                 geometryRev: s.geometryRev + 1,
                 stale: !!p.stale,
                 stdout: p.stdout ?? s.stdout,
@@ -760,9 +770,10 @@ export const useStore = create<StoreState>()(
                 : s.runTarget,
           };
         }),
-      renderShapes: (shapes, specs, joints = [], motion = []) =>
+      renderShapes: (shapes, specs, joints = [], motion = [], docId) =>
         set((s) => ({
           shapes,
+          shapesDocId: docId ?? s.activeDocId,
           geometryRev: s.geometryRev + 1,
           specs,
           joints,

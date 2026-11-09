@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CadCanvas, type CadCanvasHandle, type PickEvent, type SectionAxis } from "@cadcode/viewer";
+import { CadCanvas, type CadCanvasHandle, type PickEvent, type SectionAxis, type ViewerOptions } from "@cadcode/viewer";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
 
@@ -30,6 +30,31 @@ export function Viewport() {
   const simFrames = useStore((s) => s.simFrames);
   const simFrame = useStore((s) => s.simFrame);
   const simPlaying = useStore((s) => s.simPlaying);
+  const activeDocId = useStore((s) => s.activeDocId);
+
+  const shapesDocId = useStore((s) => s.shapesDocId);
+
+  // Per-document camera memory. Switching documents saves the outgoing view; once
+  // the incoming document's own geometry lands, it gets its saved view back (or a
+  // fresh fit). Re-runs of the same document never touch the camera.
+  const cameras = useRef(new Map<string, ViewerOptions>());
+  const shownDoc = useRef(activeDocId);
+  const pendingDoc = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = shownDoc.current;
+    if (prev === activeDocId) return;
+    shownDoc.current = activeDocId;
+    const v = viewerRef.current;
+    if (prev && pendingDoc.current !== prev && useStore.getState().shapesDocId === prev && v)
+      cameras.current.set(prev, v.getCameraState());
+    pendingDoc.current = activeDocId;
+  }, [activeDocId]);
+  // Runs after CadCanvas has rendered this geometry (child effects fire first).
+  useEffect(() => {
+    if (!pendingDoc.current || shapesDocId !== pendingDoc.current || !shapes?.parts?.length) return;
+    viewerRef.current?.frame(cameras.current.get(shapesDocId));
+    pendingDoc.current = null;
+  }, [rev, shapesDocId, shapes]);
 
   // Apply the exploded-view spread; re-apply on new geometry, skip during physics.
   useEffect(() => {

@@ -36,6 +36,7 @@ export interface CadCanvasHandle {
   fitView: () => void;
   getCameraState: () => ViewerOptions;
   setCameraState: (c: ViewerOptions) => void;
+  frame: (camera?: ViewerOptions) => void;
   setSection: (axis: SectionAxis | null, offset?: number) => void;
   setMode: (mode: InteractionMode) => void;
   clearMeasure: () => void;
@@ -72,6 +73,7 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
     fitView: () => viewerRef.current?.fit(),
     getCameraState: () => viewerRef.current?.getCameraState() ?? {},
     setCameraState: (c) => viewerRef.current?.setCameraState(c),
+    frame: (camera) => viewerRef.current?.frame(camera),
     setSection: (axis, offset) => viewerRef.current?.setSection(axis, offset),
     setMode: (mode) => viewerRef.current?.setInteractionMode(mode),
     clearMeasure: () => viewerRef.current?.clearMeasure(),
