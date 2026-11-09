@@ -573,15 +573,21 @@ textarea {
   overflow: hidden;
 }
 
-/* over-viewport toolbar (select / measure / section / fit) */
-.vp-toolbar {
+/* over-viewport toolbars (select / measure / section / fit, then views / x-ray) */
+.vp-toolbars {
   position: absolute;
   top: var(--sp-3);
   right: var(--sp-3);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
   gap: var(--sp-2);
   z-index: 5;
+}
+.vp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 .vp-group {
   display: flex;
@@ -2882,12 +2888,15 @@ textarea {
     left: var(--sp-2);
     bottom: var(--sp-2);
   }
-  .vp-toolbar {
+  .vp-toolbars {
     top: var(--sp-2);
     right: var(--sp-2);
     gap: var(--sp-1);
+    max-width: 72%;
+  }
+  .vp-toolbar {
+    gap: var(--sp-1);
     flex-wrap: wrap;
     justify-content: flex-end;
-    max-width: 72%;
   }
 }
