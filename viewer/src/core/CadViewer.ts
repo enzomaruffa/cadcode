@@ -73,6 +73,7 @@ export class CadViewer {
   private xray = false;
 
   private framedOnce = false;
+  private gizmoOn = true;
   private rafId: number | null = null;
   private disposed = false;
   // Motion sim: leaves currently flashed for collision → their original color.
@@ -170,6 +171,57 @@ export class CadViewer {
     this.requestRender();
   }
 
+  /** Render `shapes` at width×height CSS px, fit to the iso view and return the
+   *  frame as a PNG data URL. Draws and reads back in the same task, so it works
+   *  without `preserveDrawingBuffer`. No gizmo or overlays. */
+  snapshot(shapes: TessShapes, preset: RenderPreset, width: number, height: number): string {
+    if (this.disposed) return "";
+    this.resize(width, height);
+    this.render(shapes, preset);
+    this.frameTight();
+    if (this.rafId != null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.lights.updateHeadlight(this.rig.camera);
+    if (this.preset.aoEnabled) this.post.render();
+    else this.renderer.render(this.scene, this.rig.camera);
+    const url = this.renderer.domElement.toDataURL("image/png");
+    this.clearGraph();
+    return url;
+  }
+
+  /** Iso fit, then zoom until the model's projected bbox fills `fill` of the
+   *  smaller half-extent of the view (fit() frames the bounding sphere, which
+   *  leaves flat or slender parts tiny in a small card). */
+  frameTight(fill = 0.85): void {
+    const sg = this.sceneGraph;
+    if (!sg) return;
+    this.rig.fitTo(sg.bbox);
+    this.controls.syncTarget(this.rig.target);
+    const cam = this.rig.camera;
+    cam.updateMatrixWorld();
+    const b = sg.bbox;
+    const v = new THREE.Vector3();
+    let ext = 0;
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).project(cam);
+      ext = Math.max(ext, Math.abs(v.x), Math.abs(v.y));
+    }
+    if (ext > 0) {
+      cam.zoom *= fill / ext;
+      cam.updateProjectionMatrix();
+    }
+    this.emitCameraChange();
+    this.requestRender();
+  }
+
+  /** Show or hide the corner axis gizmo. */
+  setGizmo(on: boolean): void {
+    this.gizmoOn = on;
+    this.requestRender();
+  }
+
   /** Remove + dispose the current scene graph, keep renderer/camera/controls. */
   clear(): void {
     this.clearGraph();
@@ -231,7 +283,7 @@ export class CadViewer {
     else this.renderer.render(this.scene, this.rig.camera);
     this.measure.render(this.scene, this.rig.camera);
     this.physical.render(this.scene, this.rig.camera);
-    this.gizmo.render(this.renderer, this.rig.camera);
+    if (this.gizmoOn) this.gizmo.render(this.renderer, this.rig.camera);
   }
 
   // --- camera ---------------------------------------------------------------

@@ -34,6 +34,8 @@ export interface CadCanvasProps {
 
 export interface CadCanvasHandle {
   fitView: () => void;
+  frameTight: (fill?: number) => void;
+  setGizmo: (on: boolean) => void;
   getCameraState: () => ViewerOptions;
   setCameraState: (c: ViewerOptions) => void;
   frame: (camera?: ViewerOptions) => void;
@@ -73,6 +75,8 @@ export const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function Ca
 
   useImperativeHandle(ref, () => ({
     fitView: () => viewerRef.current?.fit(),
+    frameTight: (fill) => viewerRef.current?.frameTight(fill),
+    setGizmo: (on) => viewerRef.current?.setGizmo(on),
     getCameraState: () => viewerRef.current?.getCameraState() ?? {},
     setCameraState: (c) => viewerRef.current?.setCameraState(c),
     frame: (camera) => viewerRef.current?.frame(camera),

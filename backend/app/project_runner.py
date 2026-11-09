@@ -18,11 +18,14 @@ edit -> run -> view -> edit loop (it dry-runs candidate edits here).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 import sys
 import tempfile
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +33,16 @@ from app.projects import ROOT, _file_path, _ident, _project_dir
 
 # run_project mutates global sys.path / sys.modules, so runs must not overlap.
 _RUN_LOCK = threading.Lock()
+
+# A run materializes every project and imports lib/, so its result is a pure
+# function of all of their files plus the request. Keyed by that hash, an LRU of
+# results lets unchanged targets (library thumbnails) skip the kernel entirely.
+_LIB_DIR = Path(__file__).resolve().parents[1] / "lib"
+_CACHE_ENTRIES = 160
+_CACHE_BYTES = 96_000_000  # serialized JSON; big scenes are ~9 MB each
+_cache: OrderedDict[str, tuple[dict[str, Any], int]] = OrderedDict()
+_cache_bytes = 0
+_cache_lock = threading.Lock()
 
 # Project-local imports to rewrite to `projects.<pid>.…`. `from projects.…` is
 # already absolute and does NOT match these (project != projects, parts != …).
@@ -96,6 +109,45 @@ def _materialize(tmp: Path, overrides: dict[str, str], current: str) -> None:
         p.write_text(_rewrite_imports(source, current), encoding="utf-8")
 
 
+def content_hash(
+    project: str,
+    kind: str,
+    name: str,
+    overrides: dict[str, str] | None,
+    preview_source: str | None,
+    lean: bool,
+) -> str:
+    """sha256 over every project and lib source file, the overrides and the run
+    request. Equal hashes mean the run would produce the same result."""
+    h = hashlib.sha256()
+
+    def feed(data: str | bytes) -> None:
+        b = data.encode("utf-8") if isinstance(data, str) else data
+        h.update(len(b).to_bytes(8, "little"))
+        h.update(b)
+
+    for part in (project, kind, name, "lean" if lean else "full"):
+        feed(part)
+    feed("-" if preview_source is None else "+" + preview_source)
+    for label, root in (("projects", ROOT), ("lib", _LIB_DIR)):
+        if not root.is_dir():
+            continue
+        for f in sorted(root.rglob("*.py")):
+            feed(f"{label}/{f.relative_to(root).as_posix()}")
+            feed(f.read_bytes())
+    for rel, source in sorted((overrides or {}).items()):
+        feed(f"override/{rel}")
+        feed(source)
+    return h.hexdigest()
+
+
+def clear_cache() -> None:
+    global _cache_bytes
+    with _cache_lock:
+        _cache.clear()
+        _cache_bytes = 0
+
+
 def run_project(
     project: str,
     kind: str,
@@ -111,7 +163,8 @@ def run_project(
     without committing it. If ``preview_source`` is given, THAT script is run (a
     part has no ``show()`` of its own, so previewing one means running a wrapper
     like ``show(part())``); otherwise the target file itself is run. Returns the
-    RunResult dict (ok/error/shapes/…)."""
+    RunResult dict (ok/error/shapes/…) plus ``content_hash``; results are cached
+    by that hash, so repeating an unchanged run returns immediately."""
     src_dir = _project_dir(project)
     if not src_dir.is_dir():
         return {"ok": False, "error": f"no such project {project!r}"}
@@ -121,10 +174,35 @@ def run_project(
 
     from app.kernel.runner import run_source
 
+    key = content_hash(project, kind, name, overrides, preview_source, lean)
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is not None:
+            _cache.move_to_end(key)
+            return dict(hit[0])
+
     current = _ident(project)
     tmp = Path(tempfile.mkdtemp(prefix="cadproj_"))
     with _RUN_LOCK:
-        return _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source, lean)
+        result = _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source, lean)
+    result["content_hash"] = key
+    _remember(key, result)
+    return dict(result)
+
+
+def _remember(key: str, result: dict[str, Any]) -> None:
+    global _cache_bytes
+    size = len(json.dumps(result, default=str))
+    if size > _CACHE_BYTES:
+        return
+    with _cache_lock:
+        old = _cache.pop(key, None)
+        if old is not None:
+            _cache_bytes -= old[1]
+        _cache[key] = (result, size)
+        _cache_bytes += size
+        while len(_cache) > _CACHE_ENTRIES or _cache_bytes > _CACHE_BYTES:
+            _cache_bytes -= _cache.popitem(last=False)[1][1]
 
 
 def _run_locked(tmp, current, src_dir, target, overrides, preview_source, run_source, lean=False) -> dict[str, Any]:

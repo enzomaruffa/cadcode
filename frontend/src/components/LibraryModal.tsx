@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { HTTP_URL } from "../config";
 import { useStore } from "../lib/store";
-import { PartPreview } from "./PartPreview";
+import { PartPreview, PartThumb } from "./PartPreview";
 
 interface CatalogPart {
   name: string;
@@ -25,7 +25,7 @@ const itemKey = (it: Item) => (it.scope === "global" ? `g:${it.name}` : `p:${it.
 const itemName = (it: Item) => it.name;
 
 // The library is a PROJECTS viewer AND a PARTS viewer: browse every project's
-// parts + scenes (rendered live) alongside the global reusable-parts catalog.
+// parts + scenes (thumbnails, live on hover) alongside the global reusable-parts catalog.
 export function LibraryModal({ onClose }: { onClose: () => void }) {
   const [parts, setParts] = useState<CatalogPart[]>([]);
   const [projects, setProjects] = useState<ProjectTree[]>([]);
@@ -35,6 +35,36 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
   const sendChat = useStore((s) => s.sendChat);
   const openDoc = useStore((s) => s.openDoc);
   const setRunTarget = useStore((s) => s.setRunTarget);
+  const [live, setLive] = useState<string | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+
+  const pressAt = useRef<{ x: number; y: number } | null>(null);
+
+  const liveProps = (it: Item) => {
+    const key = itemKey(it);
+    return {
+      onPointerDown: (e: PointerEvent) => {
+        pressAt.current = { x: e.clientX, y: e.clientY };
+      },
+      onClick: (e: MouseEvent) => {
+        const p = pressAt.current;
+        if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 4) return;
+        setSelected(it);
+      },
+      onMouseEnter: () => {
+        clearTimeout(hoverTimer.current);
+        hoverTimer.current = setTimeout(() => setLive(key), 250);
+      },
+      onMouseLeave: () => {
+        clearTimeout(hoverTimer.current);
+        setLive((k) => (k === key ? null : k));
+      },
+      onFocus: () => setLive(key),
+      onBlur: () => setLive((k) => (k === key ? null : k)),
+    };
+  };
 
   useEffect(() => {
     Promise.all([
@@ -186,8 +216,8 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
                         {partItems.map((n) => {
                           const it: Item = { scope: "project", project: p.name, kind: "part", name: n };
                           return (
-                            <button key={itemKey(it)} className="lib-card" onClick={() => setSelected(it)}>
-                              <PartPreview name={n} project={p.name} kind="part" className="lib-thumb" />
+                            <button key={itemKey(it)} className="lib-card" {...liveProps(it)}>
+                              <PartThumb name={n} project={p.name} kind="part" live={live === itemKey(it)} />
                               <div className="lib-meta">
                                 <div className="lib-name">{n}</div>
                                 <div className="lib-doc">part</div>
@@ -198,8 +228,8 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
                         {sceneItems.map((n) => {
                           const it: Item = { scope: "project", project: p.name, kind: "scene", name: n };
                           return (
-                            <button key={itemKey(it)} className="lib-card" onClick={() => setSelected(it)}>
-                              <PartPreview name={n} project={p.name} kind="scene" className="lib-thumb" />
+                            <button key={itemKey(it)} className="lib-card" {...liveProps(it)}>
+                              <PartThumb name={n} project={p.name} kind="scene" live={live === itemKey(it)} />
                               <div className="lib-meta">
                                 <div className="lib-name">{n}</div>
                                 <div className="lib-doc">scene</div>
@@ -221,8 +251,8 @@ export function LibraryModal({ onClose }: { onClose: () => void }) {
                   <div className="lib-grid">
                     {globalItems.map((it) =>
                       it.scope === "global" ? (
-                        <button key={itemKey(it)} className="lib-card" onClick={() => setSelected(it)}>
-                          <PartPreview name={it.name} className="lib-thumb" />
+                        <button key={itemKey(it)} className="lib-card" {...liveProps(it)}>
+                          <PartThumb name={it.name} live={live === itemKey(it)} />
                           <div className="lib-meta">
                             <div className="lib-name">{it.name}</div>
                             <div className="lib-doc">{(it.part.doc || "").split("\n")[0]}</div>
