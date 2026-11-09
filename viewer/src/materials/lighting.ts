@@ -11,6 +11,7 @@ export class LightRig {
   readonly fill: THREE.DirectionalLight;
   readonly rim: THREE.DirectionalLight;
   private envTex: THREE.Texture | null = null;
+  private readonly shoulder = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
     this.ambient = new THREE.AmbientLight(0xfff4e6, 0.6);
@@ -34,9 +35,12 @@ export class LightRig {
     this.rim.intensity = preset.directIntensity * (preset.shadowEnabled ? 0.55 : 0.35);
   }
 
-  /** Headlight follows the eye for clean reads; called each frame. */
+  /** Headlight follows the eye from over its upper-left shoulder; called each frame.
+   * Right at the eye, a face pointing at the camera sits on the specular peak edge to edge. */
   updateHeadlight(camera: THREE.Camera): void {
-    this.key.position.copy(camera.position);
+    const dist = Math.max(camera.position.distanceTo(this.key.target.position), 1);
+    this.shoulder.set(-0.35, 0.5, 0).multiplyScalar(dist).applyQuaternion(camera.quaternion);
+    this.key.position.copy(camera.position).add(this.shoulder);
   }
 
   /** Place fill/rim relative to the model bbox (static, world-anchored). */
