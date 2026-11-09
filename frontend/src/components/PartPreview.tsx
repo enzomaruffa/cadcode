@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { CadCanvas, type TessShapes } from "@cadcode/viewer";
+import { useEffect, useRef, useState } from "react";
+import { CadCanvas, type CadCanvasHandle, type TessShapes } from "@cadcode/viewer";
 import { HTTP_URL } from "../config";
+import { useThumbnail } from "../lib/thumbnails";
 
 interface Props {
   name: string;
@@ -9,12 +10,15 @@ interface Props {
   // of a global library part. Parts have no show() of their own, so we wrap them.
   project?: string;
   kind?: "part" | "scene";
+  // Card mode: no grid or gizmo, framed like the static thumbnail it replaces.
+  bare?: boolean;
 }
 
 // A standalone, orbitable mini renderer. Non-interactive (no picking/section/
 // measure) — just a pretty preview. Keyed so each item gets a fresh camera fit.
 // Used for global library parts and for project parts/scenes.
-export function PartPreview({ name, className = "part-preview", project, kind = "part" }: Props) {
+export function PartPreview({ name, className = "part-preview", project, kind = "part", bare = false }: Props) {
+  const canvas = useRef<CadCanvasHandle>(null);
   const key = `${project ?? ""}:${kind}:${name}`;
   const [data, setData] = useState<{ key: string; shapes: TessShapes } | null>(null);
 
@@ -49,14 +53,49 @@ export function PartPreview({ name, className = "part-preview", project, kind = 
   // Only show geometry that matches the current key (avoids a stale flash).
   const shapes = data && data.key === key ? data.shapes : null;
 
+  useEffect(() => {
+    const c = canvas.current;
+    if (!bare || !shapes || !c) return;
+    c.setGrid("off");
+    c.setGizmo(false);
+    c.frameTight();
+  }, [bare, shapes]);
+
   return (
     <CadCanvas
       key={key}
+      ref={canvas}
       className={className}
       shapes={shapes}
       geometryRev={shapes ? 1 : 0}
       renderProfile="presentation"
       interactive={false}
     />
+  );
+}
+
+// A library card's static image from the shared thumbnail renderer. With `live`
+// it layers an orbitable PartPreview over the image; the library keeps at most
+// one card live so the grid never holds more than one extra WebGL context.
+export function PartThumb({
+  name,
+  project,
+  kind = "part",
+  live = false,
+}: Omit<Props, "className"> & { live?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const thumb = useThumbnail({ name, project, kind }, ref);
+  return (
+    <div
+      ref={ref}
+      className={`lib-thumb lib-thumb-${thumb.status}`}
+      title={thumb.status === "failed" ? thumb.error : undefined}
+    >
+      {thumb.status === "ready" && <img src={thumb.url} alt="" draggable={false} />}
+      {thumb.status === "failed" && <span className="lib-thumb-note">doesn't build</span>}
+      {live && thumb.status === "ready" && (
+        <PartPreview name={name} project={project} kind={kind} className="lib-thumb-live" bare />
+      )}
+    </div>
   );
 }

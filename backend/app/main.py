@@ -371,7 +371,9 @@ async def get_project_files(project: str) -> dict:
 async def run_project_target(project: str, payload: dict) -> dict:
     """Run one project file (a scene assembling parts, or a single part) with the
     project importable, applying any uncommitted `overrides` ({relpath: source}).
-    Returns the RunResult dict (ok/error/shapes/bbox/specs) for rendering."""
+    Returns the RunResult dict (ok/error/shapes/bbox/specs/content_hash) for
+    rendering. When `if_none_match` equals the current content hash, only
+    `{content_hash, unchanged: true}` comes back."""
     import asyncio
 
     from app.project_runner import run_project
@@ -383,6 +385,13 @@ async def run_project_target(project: str, payload: dict) -> dict:
         overrides = None
     preview = payload.get("source")
     preview_source = str(preview) if isinstance(preview, str) else None
+    known = payload.get("if_none_match")
+    if isinstance(known, str) and known:
+        from app.project_runner import content_hash
+
+        current = await asyncio.to_thread(content_hash, project, kind, name, overrides, preview_source, False)
+        if current == known:
+            return {"content_hash": current, "unchanged": True}
     result = await asyncio.to_thread(run_project, project, kind, name, overrides, preview_source)
     # Slider params for the file being edited (the run target), so the ParamsPanel
     # works for project scenes/files just like the scratch buffer does.
