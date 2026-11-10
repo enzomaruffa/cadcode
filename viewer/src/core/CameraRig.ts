@@ -18,6 +18,8 @@ export class CameraRig {
   private radius = 1;
   private aspect = 1;
   private readonly up: THREE.Vector3;
+  private readonly viewBack = new THREE.Vector3();
+  private readonly eyeOffset = new THREE.Vector3();
 
   constructor(opts: ViewerOptions) {
     this.up = opts.up === "Y" ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
@@ -107,6 +109,28 @@ export class CameraRig {
     this.persp.position.copy(this.target).addScaledVector(dir, dist);
     this.persp.far = Math.max(this.persp.far, dist + this.radius * 4);
     this.persp.updateProjectionMatrix();
+  }
+
+  /** Fit near/far around everything drawn, every frame: zooming, panning and a camera
+   *  restored from another document all move the eye relative to the last fit. */
+  updateClipping(bounds: THREE.Sphere): void {
+    const cam = this.camera;
+    const r = Math.max(bounds.radius, 1e-3);
+    const back = this.viewBack.setFromMatrixColumn(cam.matrixWorld, 2);
+    let s = this.eyeOffset.copy(cam.position).sub(bounds.center).dot(back);
+    if (this.isOrtho && s < r * 1.5) {
+      // Sliding an ortho eye along its view axis leaves the image unchanged.
+      cam.position.addScaledVector(back, r * 1.5 - s);
+      cam.updateMatrixWorld();
+      s = r * 1.5;
+    }
+    const near = this.isOrtho ? Math.max(s - r * 1.2, 1e-3) : Math.max(s - r * 1.2, s * 0.005, 1e-3);
+    const far = s + r * 1.2;
+    if (cam.near !== near || cam.far !== far) {
+      cam.near = near;
+      cam.far = far;
+      cam.updateProjectionMatrix();
+    }
   }
 
   restore(opts: ViewerOptions): void {
