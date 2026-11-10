@@ -78,6 +78,8 @@ export class CadViewer {
   private disposed = false;
   // Motion sim: leaves currently flashed for collision → their original color.
   private flashed = new Map<string, THREE.Color>();
+  private readonly boundsBox = new THREE.Box3();
+  private readonly boundsSphere = new THREE.Sphere();
 
   // Camera-change diff bookkeeping for the notify callback.
   private last: { position?: number[]; quaternion?: number[]; zoom?: number; target?: number[] } = {};
@@ -183,6 +185,7 @@ export class CadViewer {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.rig.updateClipping(this.drawnBounds());
     this.lights.updateHeadlight(this.rig.camera);
     if (this.preset.aoEnabled) this.post.render();
     else this.renderer.render(this.scene, this.rig.camera);
@@ -274,8 +277,16 @@ export class CadViewer {
     });
   }
 
+  /** Bounding sphere of every mesh in the scene, grid and shadow ground included. */
+  private drawnBounds(): THREE.Sphere {
+    this.boundsBox.setFromObject(this.scene);
+    if (this.boundsBox.isEmpty()) return this.boundsSphere.set(this.rig.target, this.rig.bbRadius);
+    return this.boundsBox.getBoundingSphere(this.boundsSphere);
+  }
+
   private draw(): void {
     if (this.disposed) return;
+    this.rig.updateClipping(this.drawnBounds());
     this.lights.updateHeadlight(this.rig.camera);
     // Presentation goes through the AO/AA composer; technical renders straight
     // (crisp, literal colors). Diagnostic modes keep AO off via their presets.
